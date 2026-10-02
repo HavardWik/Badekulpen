@@ -60,24 +60,81 @@
     return "#BD5339";
   }
 
+  // Resizes/compresses an image file in the browser (no upload, no server)
+  // and resolves to a JPEG data: URL small enough to store directly on a
+  // Firestore check-in document (which must stay under 1MB total). Rejects
+  // with a short Norwegian message on failure or if it's not an image.
+  var MAX_PHOTO_CHARS = 700000; // ~700KB as base64 text, comfortably under Firestore's 1MB/doc limit
+  function compressImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || file.type.indexOf("image/") !== 0) {
+        reject(new Error("Velg en bildefil (jpg, png e.l.)."));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("Kunne ikke lese bildet.")); };
+      reader.onload = function () {
+        var img = new Image();
+        img.onerror = function () { reject(new Error("Kunne ikke lese bildet.")); };
+        img.onload = function () {
+          var tryQuality = function (maxDim, quality) {
+            var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            var w = Math.max(1, Math.round(img.width * scale));
+            var h = Math.max(1, Math.round(img.height * scale));
+            var canvas = document.createElement("canvas");
+            canvas.width = w; canvas.height = h;
+            canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL("image/jpeg", quality);
+          };
+          // Step down size/quality until it fits comfortably in one Firestore doc.
+          var attempts = [[1100, 0.7], [800, 0.6], [600, 0.5], [450, 0.4]];
+          for (var i = 0; i < attempts.length; i++) {
+            var dataUrl = tryQuality(attempts[i][0], attempts[i][1]);
+            if (dataUrl.length <= MAX_PHOTO_CHARS) { resolve(dataUrl); return; }
+          }
+          reject(new Error("Bildet er for stort selv etter komprimering. Prøv et annet bilde."));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Norway's 15 fylker (counties), as of the 2024 structure.
+  var FYLKER = ["Agder", "Akershus", "Buskerud", "Finnmark", "Innlandet",
+    "Møre og Romsdal", "Nordland", "Oslo", "Rogaland", "Telemark", "Troms",
+    "Trøndelag", "Vestfold", "Vestland", "Østfold"];
+
   // ---------------- State ----------------
   var state = {
     myUser: null,       // firebase.User | null
     spots: [],
     checkins: [],
+    lists: [],           // this user's own lists (favorites you can share)
     view: "map",
     selectedId: null,
     placing: false,
     search: "",
-    cityFilter: "all",
+    fylkeFilter: "all",
+    kommuneFilter: "all",
+    typeFilter: "all",
     formMode: null,
     dbError: null,
+    sharedListId: null,   // set when viewing index.html?liste=<id>
+    sharedList: null,
+    sharedListMissing: false,
+    sharedSpotId: null,   // set when viewing index.html?sted=<id> (a directly-shared private spot)
+    _sharedSpotOpened: false,
     _pendingRating: 0,
     _pendingComment: "",
+    _pendingPhoto: null,     // compressed data: URL string, or null
+    _pendingPhotoError: null,
+    _pendingPhotoBusy: false,
     _newSpot: null,
     _addError: null,
     _confirmDelete: null,
-    _confirmDeleteSpot: null
+    _confirmDeleteSpot: null,
+    _confirmDeleteList: null
   };
 
   var mapPaneEl = document.getElementById("mapPane");
@@ -85,14 +142,32 @@
   var panelBody = document.getElementById("panelBody");
   var listView = document.getElementById("listView");
   var mineView = document.getElementById("mineView");
+  var listsView = document.getElementById("listsView");
   var addBanner = document.getElementById("addBanner");
   var searchBox = document.getElementById("searchBox");
-  var cityFilterEl = document.getElementById("cityFilter");
+  var fylkeFilterEl = document.getElementById("fylkeFilter");
+  var kommuneFilterEl = document.getElementById("kommuneFilter");
+  var typeFilterEl = document.getElementById("typeFilter");
   var signInBtn = document.getElementById("signInBtn");
   var signOutBtn = document.getElementById("signOutBtn");
   var viewerChip = document.getElementById("viewerChip");
   var viewerAvatar = document.getElementById("viewerAvatar");
   var viewerName = document.getElementById("viewerName");
+  var sharedBanner = document.getElementById("sharedBanner");
+  var sharedBannerText = document.getElementById("sharedBannerText");
+  var sharedBannerClose = document.getElementById("sharedBannerClose");
+  var photoLightbox = document.getElementById("photoLightbox");
+  var photoLightboxImg = document.getElementById("photoLightboxImg");
+
+  function openLightbox(src) {
+    photoLightboxImg.src = src;
+    photoLightbox.style.display = "flex";
+  }
+  function closeLightbox() {
+    photoLightbox.style.display = "none";
+    photoLightboxImg.src = "";
+  }
+  photoLightbox.addEventListener("click", closeLightbox);
 
   // ---------------- Auth ----------------
   signInBtn.addEventListener("click", function () {
@@ -114,6 +189,7 @@
       signInBtn.style.display = "inline-flex";
       viewerChip.style.display = "none";
     }
+    subscribeLists();
     render();
   });
 
@@ -134,12 +210,34 @@
       data.id = d.id;
       return data;
     });
-    populateCityFilter();
+    populateFylkeFilter();
+    populateKommuneFilter();
+    if (state.sharedSpotId && !state._sharedSpotOpened) {
+      var shared = state.spots.filter(function (s) { return s.id === state.sharedSpotId; })[0];
+      if (shared) {
+        state._sharedSpotOpened = true;
+        selectSpot(shared.id);
+        hasFitOnce = false; // make sure a private spot far from the default view is reachable
+      }
+    }
     render();
   }, function (err) {
     state.dbError = dbErrorMessage(err);
     render();
   });
+
+  // A spot is visible in the normal map/list UI to: anyone, if it's public;
+  // the person who added it, always; and anyone who opened a direct
+  // index.html?sted=<id> link to it, even if it's marked "bare meg". This is
+  // a UI-level privacy filter (see firestore.rules: all spots are still
+  // technically readable, same trust model as the "lists" feature) — good
+  // enough for a friends-and-family app, not a hardened access boundary.
+  function isSpotVisible(s) {
+    if ((s.visibility || "public") !== "private") return true;
+    if (state.myUser && s.addedBy === state.myUser.uid) return true;
+    if (s.id === state.sharedSpotId) return true;
+    return false;
+  }
 
   db.collection("checkins").onSnapshot(function (snap) {
     state.checkins = snap.docs.map(function (d) {
@@ -153,27 +251,129 @@
     render();
   });
 
-  function populateCityFilter() {
-    var cities = Array.from(new Set(state.spots.map(function (s) { return s.city; }).filter(Boolean))).sort();
-    var current = cityFilterEl.value || "all";
-    cityFilterEl.innerHTML = '<option value="all">Alle byer</option>' +
-      cities.map(function (c) { return '<option value="' + c.replace(/"/g, "") + '">' + c + "</option>"; }).join("");
-    cityFilterEl.value = cities.indexOf(current) >= 0 ? current : "all";
+  function populateFylkeFilter() {
+    var fylker = Array.from(new Set(state.spots.map(function (s) { return s.fylke; }).filter(Boolean))).sort();
+    var current = fylkeFilterEl.value || "all";
+    fylkeFilterEl.innerHTML = '<option value="all">Alle fylker</option>' +
+      fylker.map(function (f) { return '<option value="' + f.replace(/"/g, "") + '">' + f + "</option>"; }).join("");
+    fylkeFilterEl.value = fylker.indexOf(current) >= 0 ? current : "all";
+  }
+
+  function populateKommuneFilter() {
+    var relevant = state.spots.filter(function (s) {
+      return state.fylkeFilter === "all" || s.fylke === state.fylkeFilter;
+    });
+    var kommuner = Array.from(new Set(relevant.map(function (s) { return s.kommune; }).filter(Boolean))).sort();
+    var current = kommuneFilterEl.value || "all";
+    kommuneFilterEl.innerHTML = '<option value="all">Alle kommuner</option>' +
+      kommuner.map(function (k) { return '<option value="' + k.replace(/"/g, "") + '">' + k + "</option>"; }).join("");
+    kommuneFilterEl.value = kommuner.indexOf(current) >= 0 ? current : "all";
   }
 
   function visibleSpots() {
     var q = state.search.trim().toLowerCase();
-    return state.spots.filter(function (s) {
-      if (state.cityFilter !== "all" && s.city !== state.cityFilter) return false;
+    var list = state.spots;
+
+    if (state.sharedListId) {
+      if (!state.sharedList) return [];
+      var idSet = {};
+      (state.sharedList.spotIds || []).forEach(function (id) { idSet[id] = true; });
+      list = list.filter(function (s) { return idSet[s.id]; });
+    }
+
+    return list.filter(function (s) {
+      if (!isSpotVisible(s)) return false;
+      if (s.id === state.sharedSpotId) return true; // a directly-shared spot always shows, regardless of filters
+      if (!state.sharedListId) {
+        if (state.fylkeFilter !== "all" && s.fylke !== state.fylkeFilter) return false;
+        if (state.kommuneFilter !== "all" && s.kommune !== state.kommuneFilter) return false;
+      }
+      if (state.typeFilter !== "all" && (s.type || "badeplass") !== state.typeFilter) return false;
       if (!q) return true;
-      var hay = ((s.name || "") + " " + (s.district || "") + " " + (s.city || "") + " " + (s.desc || "")).toLowerCase();
+      var hay = ((s.name || "") + " " + (s.district || "") + " " + (s.kommune || "") + " " + (s.fylke || "") + " " + (s.desc || "")).toLowerCase();
       return hay.indexOf(q) !== -1;
     });
   }
 
+  // ---------------- Lists (favorites you can share) ----------------
+  var listsUnsub = null;
+  function subscribeLists() {
+    if (listsUnsub) { listsUnsub(); listsUnsub = null; }
+    state.lists = [];
+    if (!state.myUser) { render(); return; }
+    listsUnsub = db.collection("lists").where("ownerId", "==", state.myUser.uid).onSnapshot(function (snap) {
+      state.lists = snap.docs.map(function (d) {
+        var data = d.data() || {};
+        data.id = d.id;
+        return data;
+      }).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+      render();
+    }, function (err) { state.dbError = dbErrorMessage(err); render(); });
+  }
+
+  var sharedListUnsub = null;
+  function subscribeSharedList(id) {
+    if (sharedListUnsub) { sharedListUnsub(); sharedListUnsub = null; }
+    state.sharedList = null;
+    state.sharedListMissing = false;
+    sharedListUnsub = db.collection("lists").doc(id).onSnapshot(function (doc) {
+      if (doc.exists) {
+        var data = doc.data() || {};
+        data.id = doc.id;
+        state.sharedList = data;
+        state.sharedListMissing = false;
+      } else {
+        state.sharedList = null;
+        state.sharedListMissing = true;
+      }
+      hasFitOnce = false; // re-fit the map to the (new) visible set
+      render();
+    }, function (err) { state.dbError = dbErrorMessage(err); render(); });
+  }
+
+  function openSharedList(id, listDataIfKnown) {
+    var url = new URL(location.href);
+    url.search = "";
+    url.searchParams.set("liste", id);
+    history.replaceState({}, "", url.toString());
+    state.sharedListId = id;
+    if (listDataIfKnown) { state.sharedList = listDataIfKnown; state.sharedListMissing = false; }
+    subscribeSharedList(id);
+    state.view = "map";
+    hasFitOnce = false;
+    render();
+  }
+
+  function clearSharedList() {
+    if (sharedListUnsub) { sharedListUnsub(); sharedListUnsub = null; }
+    state.sharedListId = null;
+    state.sharedList = null;
+    state.sharedListMissing = false;
+    var url = new URL(location.href);
+    url.searchParams.delete("liste");
+    history.replaceState({}, "", url.toString());
+    hasFitOnce = false;
+    render();
+  }
+
+  function renderSharedBanner() {
+    if (!state.sharedListId) { sharedBanner.style.display = "none"; return; }
+    sharedBanner.style.display = "flex";
+    if (state.sharedList) {
+      var n = (state.sharedList.spotIds || []).length;
+      sharedBannerText.textContent = "Viser liste “" + (state.sharedList.name || "Liste") + "” av " +
+        (state.sharedList.ownerName || "en venn") + " — " + n + (n === 1 ? " badeplass" : " badeplasser");
+    } else if (state.sharedListMissing) {
+      sharedBannerText.textContent = "Fant ikke denne listen. Den kan være slettet.";
+    } else {
+      sharedBannerText.textContent = "Laster liste…";
+    }
+  }
+
   // ---------------- Leaflet map ----------------
   var DEFAULT_CENTER = [60.39, 5.32]; // Bergen
-  var map = L.map("map", { zoomControl: true }).setView(DEFAULT_CENTER, 11);
+  var map = L.map("map", { zoomControl: false }).setView(DEFAULT_CENTER, 11);
+  L.control.zoom({ position: "bottomleft" }).addTo(map);
 
   var satellite = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -205,23 +405,38 @@
 
     spots.forEach(function (s) {
       if (typeof s.lat !== "number" || typeof s.lon !== "number") return;
+      if (!isSpotVisible(s)) return; // someone else's private spot: not shown on your map
       var agg = aggregateRatings(state.checkins, s.id);
       var dimmed = !visibleIds[s.id];
-      var radius = 7 + Math.min(agg.count, 9);
-      var marker = L.circleMarker([s.lat, s.lon], {
-        radius: radius,
-        color: "#fff",
-        weight: 2,
-        fillColor: ratingColor(agg.avg, agg.count),
-        fillOpacity: dimmed ? 0.25 : 0.95,
-        opacity: dimmed ? 0.25 : 1
-      });
+      var color = ratingColor(agg.avg, agg.count);
+      var marker;
+
+      if (s.type === "sauna") {
+        marker = L.marker([s.lat, s.lon], {
+          icon: L.divIcon({
+            className: "sauna-marker",
+            html: '<div class="sauna-marker-inner" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+          })
+        });
+      } else {
+        var radius = 7 + Math.min(agg.count, 9);
+        marker = L.circleMarker([s.lat, s.lon], {
+          radius: radius,
+          color: "#fff",
+          weight: 2,
+          fillColor: color,
+          fillOpacity: dimmed ? 0.25 : 0.95,
+          opacity: dimmed ? 0.25 : 1
+        });
+      }
       marker.on("click", function () { selectSpot(s.id); });
       marker.addTo(markerLayer);
     });
 
-    if (!hasFitOnce && spots.length) {
-      var bounds = L.latLngBounds(spots.filter(function (s) { return typeof s.lat === "number"; }).map(function (s) { return [s.lat, s.lon]; }));
+    if (!hasFitOnce && visible.length) {
+      var bounds = L.latLngBounds(visible.filter(function (s) { return typeof s.lat === "number"; }).map(function (s) { return [s.lat, s.lon]; }));
       if (bounds.isValid()) { map.fitBounds(bounds.pad(0.25)); hasFitOnce = true; }
     }
   }
@@ -249,19 +464,24 @@
 
   // ---------------- Rendering ----------------
   function render() {
+    renderSharedBanner();
     renderTabs();
     renderMap();
     if (state.view === "map") {
       mapPaneEl.style.display = "block"; sidePanel.style.display = "block";
-      listView.style.display = "none"; mineView.style.display = "none";
+      listView.style.display = "none"; mineView.style.display = "none"; listsView.style.display = "none";
       setTimeout(function () { map.invalidateSize(); }, 0);
     } else if (state.view === "list") {
       mapPaneEl.style.display = "none"; sidePanel.style.display = "block";
-      listView.style.display = "block"; mineView.style.display = "none";
+      listView.style.display = "block"; mineView.style.display = "none"; listsView.style.display = "none";
       renderList();
+    } else if (state.view === "lists") {
+      mapPaneEl.style.display = "none"; sidePanel.style.display = "none";
+      listView.style.display = "none"; mineView.style.display = "none"; listsView.style.display = "block";
+      renderLists();
     } else {
       mapPaneEl.style.display = "none"; sidePanel.style.display = "none";
-      listView.style.display = "none"; mineView.style.display = "block";
+      listView.style.display = "none"; mineView.style.display = "block"; listsView.style.display = "none";
       renderMine();
     }
     renderPanel();
@@ -275,6 +495,7 @@
 
   function renderPanel() {
     var spot = state.spots.filter(function (s) { return s.id === state.selectedId; })[0];
+    if (spot && !isSpotVisible(spot)) spot = null;
     panelBody.innerHTML = "";
 
     if (state.formMode === "add") {
@@ -310,13 +531,31 @@
     meta.className = "spot-meta";
     var cityChip = document.createElement("span");
     cityChip.className = "chip";
-    cityChip.textContent = (spot.district ? spot.district + ", " : "") + (spot.city || "");
+    cityChip.textContent = (spot.district ? spot.district + ", " : "") + (spot.kommune || "");
     meta.appendChild(cityChip);
+    if (spot.fylke) {
+      var fylkeChip = document.createElement("span");
+      fylkeChip.className = "chip";
+      fylkeChip.textContent = spot.fylke;
+      meta.appendChild(fylkeChip);
+    }
+    if (spot.type === "sauna") {
+      var sc = document.createElement("span");
+      sc.className = "chip official";
+      sc.textContent = "♨️ Sauna";
+      meta.appendChild(sc);
+    }
     if (spot.official) {
       var oc = document.createElement("span");
       oc.className = "chip official";
-      oc.textContent = "✓ Kommunal badeplass";
+      oc.textContent = spot.type === "sauna" ? "✓ Offentlig sauna" : "✓ Kommunal badeplass";
       meta.appendChild(oc);
+    }
+    if (spot.visibility === "private") {
+      var pc = document.createElement("span");
+      pc.className = "chip";
+      pc.textContent = "🔒 Privat (delt via lenke)";
+      meta.appendChild(pc);
     }
     wrap.appendChild(meta);
 
@@ -355,6 +594,20 @@
       rs.appendChild(cnt2);
     }
     wrap.appendChild(rs);
+
+    var listLbl = document.createElement("div");
+    listLbl.className = "section-label";
+    listLbl.textContent = "Mine lister";
+    wrap.appendChild(listLbl);
+    if (state.myUser) {
+      wrap.appendChild(buildAddToListBox(spot));
+    } else {
+      var listHint = document.createElement("div");
+      listHint.className = "rating-count";
+      listHint.style.marginBottom = "14px";
+      listHint.textContent = "Logg inn for å lagre denne i en liste du kan dele.";
+      wrap.appendChild(listHint);
+    }
 
     if (spot.facilities && spot.facilities.length) {
       var fl = document.createElement("div");
@@ -396,12 +649,13 @@
       recent.forEach(function (c) { wrap.appendChild(buildCheckinRow(c)); });
     }
 
-    if (state.myUser && spot.addedBy && spot.addedBy === state.myUser.uid && !spot.official) {
+    if (state.myUser && spot.addedBy && spot.addedBy === state.myUser.uid) {
       var manageLbl = document.createElement("div");
       manageLbl.className = "section-label";
       manageLbl.textContent = "Administrer";
       wrap.appendChild(manageLbl);
-      wrap.appendChild(buildDeleteSpotControl(spot));
+      wrap.appendChild(buildShareSpotControl(spot));
+      if (!spot.official) wrap.appendChild(buildDeleteSpotControl(spot));
     }
 
     panelBody.appendChild(wrap);
@@ -431,16 +685,63 @@
     comment.addEventListener("input", function () { state._pendingComment = comment.value; });
     box.appendChild(comment);
 
+    var photoBox = document.createElement("div");
+    photoBox.className = "photo-picker";
+    if (state._pendingPhoto) {
+      var preview = document.createElement("img");
+      preview.className = "photo-preview";
+      preview.src = state._pendingPhoto;
+      photoBox.appendChild(preview);
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn btn-ghost btn-sm";
+      removeBtn.textContent = "Fjern bilde";
+      removeBtn.addEventListener("click", function () { state._pendingPhoto = null; renderPanel(); });
+      photoBox.appendChild(removeBtn);
+    } else {
+      var fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = "image/*";
+      fileInput.style.display = "none";
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        state._pendingPhotoBusy = true; state._pendingPhotoError = null; renderPanel();
+        compressImageFile(file).then(function (dataUrl) {
+          state._pendingPhoto = dataUrl; state._pendingPhotoBusy = false; renderPanel();
+        }).catch(function (err) {
+          state._pendingPhotoError = err.message || "Kunne ikke bruke bildet.";
+          state._pendingPhotoBusy = false; renderPanel();
+        });
+      });
+      photoBox.appendChild(fileInput);
+      var photoBtn = document.createElement("button");
+      photoBtn.type = "button";
+      photoBtn.className = "btn btn-sm";
+      photoBtn.disabled = !!state._pendingPhotoBusy;
+      photoBtn.textContent = state._pendingPhotoBusy ? "Behandler bilde…" : "📷 Legg til bilde";
+      photoBtn.addEventListener("click", function () { fileInput.click(); });
+      photoBox.appendChild(photoBtn);
+      if (state._pendingPhotoError) {
+        var perr = document.createElement("div");
+        perr.className = "facility-input-hint";
+        perr.style.color = "var(--low)";
+        perr.textContent = state._pendingPhotoError;
+        photoBox.appendChild(perr);
+      }
+    }
+    box.appendChild(photoBox);
+
     var row = document.createElement("div");
     row.style.marginTop = "10px";
     var submit = document.createElement("button");
     submit.className = "btn btn-warm";
     submit.textContent = "Sjekk inn";
-    submit.disabled = !state.myUser || !myRating;
+    submit.disabled = !state.myUser || !myRating || state._pendingPhotoBusy;
     submit.addEventListener("click", function () {
       if (!state.myUser) return;
       submit.disabled = true;
-      db.collection("checkins").add({
+      var data = {
         spotId: spot.id,
         userId: state.myUser.uid,
         userName: state.myUser.displayName || "En venn",
@@ -448,10 +749,12 @@
         rating: state._pendingRating,
         comment: (state._pendingComment || "").trim().slice(0, 500),
         createdAt: new Date().toISOString()
-      }).then(function () {
-        state._pendingRating = 0; state._pendingComment = "";
+      };
+      if (state._pendingPhoto) data.photo = state._pendingPhoto;
+      db.collection("checkins").add(data).then(function () {
+        state._pendingRating = 0; state._pendingComment = ""; state._pendingPhoto = null; state._pendingPhotoError = null;
         render();
-      }).catch(function (err) { state.dbError = dbErrorMessage(err); render(); });
+      }).catch(function (err) { state.dbError = dbErrorMessage(err); submit.disabled = false; render(); });
     });
     row.appendChild(submit);
     if (!state.myUser) {
@@ -498,6 +801,16 @@
       body.appendChild(com);
     }
 
+    if (c.photo) {
+      var photo = document.createElement("img");
+      photo.className = "checkin-photo";
+      photo.src = c.photo;
+      photo.alt = "";
+      photo.loading = "lazy";
+      photo.addEventListener("click", function () { openLightbox(c.photo); });
+      body.appendChild(photo);
+    }
+
     if (state.myUser && c.userId === state.myUser.uid) {
       var del = document.createElement("button");
       del.className = "checkin-del";
@@ -512,6 +825,36 @@
 
     row.appendChild(body);
     return row;
+  }
+
+  function buildShareSpotControl(spot) {
+    var box = document.createElement("div");
+    box.style.marginBottom = "8px";
+    var btn = document.createElement("button");
+    btn.className = "btn btn-sm";
+    btn.textContent = spot.visibility === "private" ? "Del lenke til dette stedet" : "Del lenke";
+    btn.addEventListener("click", function () {
+      var url = new URL(location.href);
+      url.search = "";
+      url.searchParams.set("sted", spot.id);
+      var link = url.toString();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(function () {
+          btn.textContent = "Lenke kopiert!";
+          setTimeout(function () { btn.textContent = spot.visibility === "private" ? "Del lenke til dette stedet" : "Del lenke"; }, 2000);
+        }).catch(function () { window.prompt("Kopier denne lenken:", link); });
+      } else {
+        window.prompt("Kopier denne lenken:", link);
+      }
+    });
+    box.appendChild(btn);
+    if (spot.visibility === "private") {
+      var hint = document.createElement("div");
+      hint.className = "facility-input-hint";
+      hint.textContent = "Alle som åpner denne lenken kan se stedet, selv om det bare er synlig for deg i kartet ellers.";
+      box.appendChild(hint);
+    }
+    return box;
   }
 
   function buildDeleteSpotControl(spot) {
@@ -530,9 +873,203 @@
     return box;
   }
 
+  function buildAddToListBox(spot) {
+    var box = document.createElement("div");
+    box.className = "list-picker";
+
+    if (!state.lists.length) {
+      var hint = document.createElement("div");
+      hint.className = "rating-count";
+      hint.style.marginBottom = "8px";
+      hint.textContent = "Du har ingen lister enda — lag en under.";
+      box.appendChild(hint);
+    } else {
+      state.lists.forEach(function (l) {
+        var row = document.createElement("label");
+        row.className = "list-picker-row";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = (l.spotIds || []).indexOf(spot.id) !== -1;
+        cb.addEventListener("change", function () {
+          var op = cb.checked
+            ? firebase.firestore.FieldValue.arrayUnion(spot.id)
+            : firebase.firestore.FieldValue.arrayRemove(spot.id);
+          db.collection("lists").doc(l.id).update({ spotIds: op }).catch(function (err) {
+            state.dbError = dbErrorMessage(err); render();
+          });
+        });
+        row.appendChild(cb);
+        var span = document.createElement("span");
+        span.textContent = l.name + " (" + (l.spotIds || []).length + ")";
+        row.appendChild(span);
+        box.appendChild(row);
+      });
+    }
+
+    var newRow = document.createElement("div");
+    newRow.style.cssText = "display:flex;gap:6px;margin-top:8px;";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Ny liste…";
+    input.style.flex = "1";
+    var addBtn = document.createElement("button");
+    addBtn.className = "btn btn-sm";
+    addBtn.textContent = "Lag";
+    addBtn.addEventListener("click", function () {
+      var name = input.value.trim();
+      if (!name) return;
+      addBtn.disabled = true;
+      db.collection("lists").add({
+        name: name.slice(0, 80),
+        ownerId: state.myUser.uid,
+        ownerName: state.myUser.displayName || "en venn",
+        spotIds: [spot.id],
+        createdAt: new Date().toISOString()
+      }).then(function () {
+        input.value = ""; addBtn.disabled = false; render();
+      }).catch(function (err) { state.dbError = dbErrorMessage(err); addBtn.disabled = false; render(); });
+    });
+    newRow.appendChild(input);
+    newRow.appendChild(addBtn);
+    box.appendChild(newRow);
+    return box;
+  }
+
+  function renderLists() {
+    listsView.innerHTML = "";
+    if (!state.myUser) {
+      var e = document.createElement("div");
+      e.className = "panel-empty";
+      e.textContent = "Logg inn for å lage og dele dine egne lister over favoritt-badeplasser.";
+      listsView.appendChild(e);
+      return;
+    }
+
+    var toolbar = document.createElement("div");
+    toolbar.className = "list-toolbar";
+    var note = document.createElement("div");
+    note.className = "rating-count";
+    note.textContent = state.lists.length + (state.lists.length === 1 ? " liste" : " lister");
+    toolbar.appendChild(note);
+    listsView.appendChild(toolbar);
+
+    var newBox = document.createElement("div");
+    newBox.style.cssText = "display:flex;gap:8px;margin-bottom:22px;max-width:420px;flex-wrap:wrap;";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Navn på ny liste, f.eks. Favoritter";
+    input.style.flex = "1";
+    input.style.minWidth = "180px";
+    var btn = document.createElement("button");
+    btn.className = "btn btn-accent";
+    btn.textContent = "Lag liste";
+    btn.addEventListener("click", function () {
+      var name = input.value.trim();
+      if (!name) return;
+      btn.disabled = true;
+      db.collection("lists").add({
+        name: name.slice(0, 80),
+        ownerId: state.myUser.uid,
+        ownerName: state.myUser.displayName || "en venn",
+        spotIds: [],
+        createdAt: new Date().toISOString()
+      }).then(function () {
+        input.value = ""; btn.disabled = false;
+      }).catch(function (err) { state.dbError = dbErrorMessage(err); btn.disabled = false; render(); });
+    });
+    newBox.appendChild(input);
+    newBox.appendChild(btn);
+    listsView.appendChild(newBox);
+
+    if (!state.lists.length) {
+      var e2 = document.createElement("div");
+      e2.className = "panel-empty";
+      e2.textContent = 'Du har ingen lister enda. Lag en over, eller trykk "Mine lister" på en badeplass i kartet.';
+      listsView.appendChild(e2);
+      return;
+    }
+
+    state.lists.forEach(function (l) { listsView.appendChild(buildListCard(l)); });
+  }
+
+  function buildListCard(l) {
+    var card = document.createElement("div");
+    card.className = "list-card";
+
+    var head = document.createElement("div");
+    head.className = "list-card-head";
+    var name = document.createElement("div");
+    name.className = "list-card-name";
+    name.textContent = l.name;
+    head.appendChild(name);
+    var count = document.createElement("span");
+    count.className = "rating-count";
+    var n = (l.spotIds || []).length;
+    count.textContent = n + (n === 1 ? " badeplass" : " badeplasser");
+    head.appendChild(count);
+    card.appendChild(head);
+
+    var spotNames = (l.spotIds || []).map(function (id) {
+      var s = state.spots.filter(function (sp) { return sp.id === id; })[0];
+      return s ? s.name : null;
+    }).filter(Boolean);
+    var namesEl = document.createElement("div");
+    namesEl.className = "rating-count";
+    namesEl.style.cssText = "margin:6px 0 12px; line-height:1.5;";
+    namesEl.textContent = spotNames.length ? spotNames.join(", ") : "Ingen badeplasser lagt til enda.";
+    card.appendChild(namesEl);
+
+    var actions = document.createElement("div");
+    actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
+
+    var viewBtn = document.createElement("button");
+    viewBtn.className = "btn btn-sm";
+    viewBtn.textContent = "Vis i kart";
+    viewBtn.addEventListener("click", function () { openSharedList(l.id, l); });
+    actions.appendChild(viewBtn);
+
+    var shareBtn = document.createElement("button");
+    shareBtn.className = "btn btn-sm";
+    shareBtn.textContent = "Del lenke";
+    shareBtn.addEventListener("click", function () {
+      var url = new URL(location.href);
+      url.search = "";
+      url.searchParams.set("liste", l.id);
+      var link = url.toString();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(function () {
+          shareBtn.textContent = "Lenke kopiert!";
+          setTimeout(function () { shareBtn.textContent = "Del lenke"; }, 2000);
+        }).catch(function () { window.prompt("Kopier denne lenken:", link); });
+      } else {
+        window.prompt("Kopier denne lenken:", link);
+      }
+    });
+    actions.appendChild(shareBtn);
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "btn btn-sm btn-ghost";
+    delBtn.textContent = state._confirmDeleteList === l.id ? "Sikker? Trykk igjen for å slette" : "Slett liste";
+    delBtn.addEventListener("click", function () {
+      if (state._confirmDeleteList === l.id) {
+        db.collection("lists").doc(l.id).delete().then(function () {
+          state._confirmDeleteList = null;
+          if (state.sharedListId === l.id) clearSharedList();
+          render();
+        });
+      } else { state._confirmDeleteList = l.id; render(); }
+    });
+    actions.appendChild(delBtn);
+
+    card.appendChild(actions);
+    return card;
+  }
+
   function openAddForm(lat, lon) {
     state.formMode = "add";
-    state._newSpot = { lat: lat, lon: lon, name: "", city: "Bergen", district: "", desc: "", facilities: "" };
+    var defaultFylke = state.fylkeFilter !== "all" ? state.fylkeFilter : "";
+    var defaultKommune = state.kommuneFilter !== "all" ? state.kommuneFilter : "";
+    state._newSpot = { lat: lat, lon: lon, name: "", fylke: defaultFylke, kommune: defaultKommune, type: "badeplass", visibility: "public", desc: "", facilities: "" };
     state._addError = null;
     state.selectedId = null;
     sidePanel.classList.add("open");
@@ -570,8 +1107,59 @@
     }
 
     field("Navn", "name", "F.eks. Lille Lungegårdsvann");
-    field("By / sted", "city", "F.eks. Bergen");
-    field("Bydel / område", "district", "F.eks. Bergenhus");
+
+    var fylkeLbl = document.createElement("label");
+    fylkeLbl.className = "field-label";
+    fylkeLbl.textContent = "Fylke";
+    wrap.appendChild(fylkeLbl);
+    var fylkeSel = document.createElement("select");
+    fylkeSel.innerHTML = '<option value="">Velg fylke…</option>' +
+      FYLKER.map(function (f) {
+        return '<option value="' + f + '"' + (state._newSpot.fylke === f ? " selected" : "") + ">" + f + "</option>";
+      }).join("");
+    fylkeSel.addEventListener("change", function () { state._newSpot.fylke = fylkeSel.value; });
+    wrap.appendChild(fylkeSel);
+
+    field("Kommune", "kommune", "F.eks. Bergen");
+
+    var typeLbl = document.createElement("label");
+    typeLbl.className = "field-label";
+    typeLbl.textContent = "Type";
+    wrap.appendChild(typeLbl);
+    var typeRow = document.createElement("div");
+    typeRow.className = "type-toggle";
+    [["badeplass", "Badeplass"], ["sauna", "♨️ Sauna"]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = pair[1];
+      b.className = (state._newSpot.type || "badeplass") === pair[0] ? "on" : "";
+      b.addEventListener("click", function () { state._newSpot.type = pair[0]; renderPanel(); });
+      typeRow.appendChild(b);
+    });
+    wrap.appendChild(typeRow);
+
+    var visLbl = document.createElement("label");
+    visLbl.className = "field-label";
+    visLbl.textContent = "Hvem skal se dette stedet?";
+    wrap.appendChild(visLbl);
+    var visRow = document.createElement("div");
+    visRow.className = "type-toggle";
+    [["public", "Synlig for alle"], ["private", "🔒 Bare meg"]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = pair[1];
+      b.className = (state._newSpot.visibility || "public") === pair[0] ? "on" : "";
+      b.addEventListener("click", function () { state._newSpot.visibility = pair[0]; renderPanel(); });
+      visRow.appendChild(b);
+    });
+    wrap.appendChild(visRow);
+    var visHint = document.createElement("div");
+    visHint.className = "facility-input-hint";
+    visHint.style.marginBottom = "4px";
+    visHint.textContent = (state._newSpot.visibility === "private")
+      ? "Bare du ser dette i kartet ditt — men du kan dele en lenke til det med andre senere."
+      : "Vises for alle som bruker siden.";
+    wrap.appendChild(visHint);
 
     var descLbl = document.createElement("label");
     descLbl.className = "field-label";
@@ -621,8 +1209,10 @@
       save.disabled = true;
       db.collection("spots").add({
         name: ns.name.trim(),
-        city: (ns.city || "").trim() || "Ukjent",
-        district: (ns.district || "").trim(),
+        kommune: (ns.kommune || "").trim() || "Ukjent",
+        fylke: (ns.fylke || "").trim(),
+        type: ns.type === "sauna" ? "sauna" : "badeplass",
+        visibility: ns.visibility === "private" ? "private" : "public",
         lat: ns.lat, lon: ns.lon,
         desc: (ns.desc || "").trim(),
         facilities: (ns.facilities || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean),
@@ -659,28 +1249,36 @@
 
     var groups = {};
     visibleSpots().forEach(function (s) {
-      var key = s.city || "Ukjent";
-      groups[key] = groups[key] || [];
-      groups[key].push(s);
+      var fy = s.fylke || "Ukjent fylke";
+      var ko = s.kommune || "Ukjent kommune";
+      groups[fy] = groups[fy] || {};
+      groups[fy][ko] = groups[fy][ko] || [];
+      groups[fy][ko].push(s);
     });
-    var cityNames = Object.keys(groups).sort();
-    if (!cityNames.length) {
+    var fylkeNames = Object.keys(groups).sort();
+    if (!fylkeNames.length) {
       var e = document.createElement("div");
       e.className = "panel-empty";
       e.textContent = "Ingen badeplasser funnet.";
       listView.appendChild(e);
       return;
     }
-    cityNames.forEach(function (city) {
-      var h = document.createElement("div");
-      h.className = "list-group-title";
-      h.textContent = city;
-      listView.appendChild(h);
-      groups[city].sort(function (a, b) {
-        var ra = aggregateRatings(state.checkins, a.id).avg || 0;
-        var rb = aggregateRatings(state.checkins, b.id).avg || 0;
-        return rb - ra;
-      }).forEach(function (s) { listView.appendChild(buildSpotRow(s)); });
+    fylkeNames.forEach(function (fy) {
+      var fh = document.createElement("div");
+      fh.className = "list-group-title-fylke";
+      fh.textContent = fy;
+      listView.appendChild(fh);
+      Object.keys(groups[fy]).sort().forEach(function (ko) {
+        var kh = document.createElement("div");
+        kh.className = "list-group-title-kommune";
+        kh.textContent = ko;
+        listView.appendChild(kh);
+        groups[fy][ko].sort(function (a, b) {
+          var ra = aggregateRatings(state.checkins, a.id).avg || 0;
+          var rb = aggregateRatings(state.checkins, b.id).avg || 0;
+          return rb - ra;
+        }).forEach(function (s) { listView.appendChild(buildSpotRow(s)); });
+      });
     });
   }
 
@@ -697,11 +1295,11 @@
     main.className = "spot-row-main";
     var name = document.createElement("div");
     name.className = "spot-row-name";
-    name.textContent = s.name || "Badeplass";
+    name.textContent = (s.type === "sauna" ? "♨️ " : "") + (s.name || "Badeplass");
     main.appendChild(name);
     var sub = document.createElement("div");
     sub.className = "spot-row-sub";
-    sub.textContent = (s.district ? s.district + ", " : "") + (s.city || "");
+    sub.textContent = (s.district ? s.district + ", " : "") + (s.kommune || "");
     main.appendChild(sub);
     row.appendChild(main);
 
@@ -810,7 +1408,30 @@
     render();
   });
   searchBox.addEventListener("input", function () { state.search = searchBox.value; render(); });
-  cityFilterEl.addEventListener("change", function () { state.cityFilter = cityFilterEl.value; render(); });
+  fylkeFilterEl.addEventListener("change", function () {
+    state.fylkeFilter = fylkeFilterEl.value;
+    state.kommuneFilter = "all";
+    populateKommuneFilter();
+    render();
+  });
+  kommuneFilterEl.addEventListener("change", function () { state.kommuneFilter = kommuneFilterEl.value; render(); });
+  typeFilterEl.addEventListener("change", function () { state.typeFilter = typeFilterEl.value; render(); });
+  sharedBannerClose.addEventListener("click", clearSharedList);
+
+  // ---------------- Shared list via ?liste=<id>, or a single shared spot via ?sted=<id> ----------------
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var listeId = params.get("liste");
+    var stedId = params.get("sted");
+    if (listeId) {
+      state.sharedListId = listeId;
+      subscribeSharedList(listeId);
+    } else if (stedId) {
+      // The matching spot (if any) is picked out and auto-selected once the
+      // normal spots subscription above has loaded — see its onSnapshot.
+      state.sharedSpotId = stedId;
+    }
+  })();
 
   render();
 })();

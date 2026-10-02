@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Badeplassen</title>
-<meta name="description" content="Finn, sjekk inn og vurder badeplasser i Bergen (og etter hvert hele Norge) sammen med venner og familie.">
+<meta name="description" content="Finn, sjekk inn og vurder badeplasser i Bergen og Bærum (og etter hvert hele Norge) sammen med venner og familie.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%231b6e8c'/%3E%3Cpath d='M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='8' r='3' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -107,19 +107,45 @@
     flex: 1; min-width: 160px; max-width: 280px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 999px; padding: 8px 14px; font-size: 13.5px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow);
   }
-  select.city-filter {
+  select.filter-select {
     background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px;
-    font-size: 13px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow); font-family: inherit;
+    font-size: 13px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow); font-family: inherit; max-width: 160px;
   }
 
+  .shared-banner {
+    display: none; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; text-align: center;
+    background: var(--accent-soft); color: var(--accent); padding: 9px 16px; font-size: 13px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .shared-banner button {
+    background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer; font-weight: 600; font-family: inherit;
+  }
+
+  /* Zoom control now lives bottom-left (via JS), so lift the legend above it. */
+  .leaflet-bottom.leaflet-left .leaflet-control-zoom { margin-left: 14px; margin-bottom: 14px; }
+
   .map-legend {
-    position: absolute; left: 14px; bottom: 14px; z-index: 500; background: var(--surface); border: 1px solid var(--border);
+    position: absolute; left: 14px; bottom: 92px; z-index: 500; background: var(--surface); border: 1px solid var(--border);
     border-radius: 12px; padding: 10px 12px; font-size: 11.5px; color: var(--ink-soft); box-shadow: 0 2px 10px var(--shadow);
     max-width: 210px; line-height: 1.5;
   }
   .map-legend b { color: var(--ink); display: block; margin-bottom: 4px; font-size: 12px; }
   .legend-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+
+  .sauna-marker { background: transparent; border: none; }
+  .sauna-marker-inner {
+    width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2);
+    display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+  }
+
+  .type-toggle { display: flex; gap: 6px; margin-bottom: 4px; }
+  .type-toggle button {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink-soft);
+    padding: 7px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .type-toggle button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
   .add-banner {
     position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 600; background: var(--ink); color: var(--bg);
@@ -163,7 +189,7 @@
 
   .checkin-row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
   .checkin-row:first-of-type { border-top: none; }
-  .checkin-row img { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; background: var(--surface-2); }
+  .checkin-row > img { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; background: var(--surface-2); }
   .checkin-body { flex: 1; min-width: 0; }
   .checkin-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
   .checkin-name { font-weight: 700; font-size: 13px; }
@@ -172,12 +198,44 @@
   .checkin-comment { font-size: 13px; color: var(--ink-soft); margin-top: 2px; line-height: 1.45; }
   .checkin-del { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 11px; margin-top: 3px; padding: 0; }
 
+  .checkin-photo {
+    display: block; margin-top: 8px; max-width: 100%; max-height: 160px; border-radius: 10px;
+    border: 1px solid var(--border); cursor: zoom-in; object-fit: cover;
+  }
+
+  .photo-picker { margin: 4px 0 2px; }
+  .photo-preview {
+    display: block; max-width: 100%; max-height: 180px; border-radius: 10px; border: 1px solid var(--border);
+    margin-bottom: 6px; object-fit: cover;
+  }
+
+  .photo-lightbox {
+    display: none; position: fixed; inset: 0; background: rgba(10,16,18,.86); z-index: 9000;
+    align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;
+  }
+  .photo-lightbox img { max-width: min(92vw, 900px); max-height: 90vh; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+
   .inline-banner { font-size: 12.5px; padding: 9px 12px; border-radius: 10px; margin-bottom: 14px; background: var(--warm-soft); color: var(--low); border: 1px solid transparent; }
   .inline-banner.info { background: var(--accent-soft); color: var(--accent); }
 
   .list-view { flex: 1; overflow-y: auto; padding: 18px 22px 60px; }
   .list-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-  .list-group-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); margin: 22px 0 8px; }
+  .list-group-title-fylke {
+    font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink);
+    margin: 26px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+  }
+  .list-group-title-kommune {
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint);
+    margin: 12px 0 8px 4px;
+  }
+
+  .list-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; max-width: 540px; }
+  .list-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .list-card-name { font-weight: 700; font-size: 15.5px; font-family: "Fraunces", serif; }
+
+  .list-picker { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+  .list-picker-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; }
+  .list-picker-row input { width: auto; }
   .spot-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; cursor: pointer; transition: box-shadow .15s ease; }
   .spot-row:hover { box-shadow: 0 2px 10px var(--shadow); }
   .spot-row-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
@@ -235,13 +293,14 @@
     </div>
     <div class="brand-text">
       <h1>Badeplassen</h1>
-      <p id="tagline">Badeplasser i Bergen · flere på vei</p>
+      <p id="tagline">⛱️☀️ For de som er ekstra glad i bading</p>
     </div>
   </div>
 
   <div class="view-tabs" role="tablist">
     <button data-view="map" class="active">Kart</button>
     <button data-view="list">Liste</button>
+    <button data-view="lists">Lister</button>
     <button data-view="mine">Mine turer</button>
   </div>
 
@@ -258,12 +317,25 @@
   </div>
 </header>
 
+<div class="shared-banner" id="sharedBanner">
+  <span id="sharedBannerText"></span>
+  <button id="sharedBannerClose">Vis hele kartet</button>
+</div>
+
 <main class="layout">
   <div class="map-pane" id="mapPane">
     <div class="map-toolbar">
       <input type="text" class="search-box" id="searchBox" placeholder="Søk etter badeplass…">
-      <select class="city-filter" id="cityFilter">
-        <option value="all">Alle byer</option>
+      <select class="filter-select" id="fylkeFilter">
+        <option value="all">Alle fylker</option>
+      </select>
+      <select class="filter-select" id="kommuneFilter">
+        <option value="all">Alle kommuner</option>
+      </select>
+      <select class="filter-select" id="typeFilter">
+        <option value="all">Alt</option>
+        <option value="badeplass">Badeplasser</option>
+        <option value="sauna">♨️ Saunaer</option>
       </select>
     </div>
     <div class="add-banner" id="addBanner" style="display:none">
@@ -276,6 +348,7 @@
       <div class="legend-row"><span class="legend-dot" style="background:var(--good)"></span> Høyt vurdert (4,5+)</div>
       <div class="legend-row"><span class="legend-dot" style="background:var(--mid)"></span> Vurdert</div>
       <div class="legend-row"><span class="legend-dot" style="background:var(--accent)"></span> Ingen vurderinger enda</div>
+      <div class="legend-row"><span>♨️</span> Sauna</div>
     </div>
   </div>
 
@@ -290,8 +363,13 @@
   </aside>
 
   <section class="list-view" id="listView" style="display:none"></section>
+  <section class="list-view" id="listsView" style="display:none"></section>
   <section class="mine-view" id="mineView" style="display:none"></section>
 </main>
+
+<div class="photo-lightbox" id="photoLightbox">
+  <img id="photoLightboxImg" src="" alt="">
+</div>
 
 <script src="firebase-config.js"></script>
 
