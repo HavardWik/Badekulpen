@@ -416,7 +416,7 @@
         marker = L.marker([s.lat, s.lon], {
           icon: L.divIcon({
             className: "sauna-marker",
-            html: '<div class="sauna-marker-inner" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
+            html: '<div class="sauna-marker-inner marker-pop-in" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
             iconSize: [28, 28],
             iconAnchor: [14, 14]
           })
@@ -429,7 +429,8 @@
           weight: 2,
           fillColor: color,
           fillOpacity: dimmed ? 0.25 : 0.95,
-          opacity: dimmed ? 0.25 : 1
+          opacity: dimmed ? 0.25 : 1,
+          className: "marker-pop-in"
         });
       }
       marker.on("click", function () { selectSpot(s.id); });
@@ -1133,11 +1134,12 @@
     wrap.appendChild(typeLbl);
     var typeRow = document.createElement("div");
     typeRow.className = "type-toggle";
-    [["badeplass", "Badeplass"], ["sauna", "♨️ Sauna"]].forEach(function (pair) {
+    [["badeplass", "Badeplass"], ["sauna", "♨️ Sauna"]].forEach(function (pair, i) {
       var b = document.createElement("button");
       b.type = "button";
       b.textContent = pair[1];
-      b.className = (state._newSpot.type || "badeplass") === pair[0] ? "on" : "";
+      var isOn = (state._newSpot.type || "badeplass") === pair[0];
+      b.className = isOn ? (i === 1 ? "on warm" : "on") : "";
       b.addEventListener("click", function () { state._newSpot.type = pair[0]; renderPanel(); });
       typeRow.appendChild(b);
     });
@@ -1149,11 +1151,12 @@
     wrap.appendChild(visLbl);
     var visRow = document.createElement("div");
     visRow.className = "type-toggle";
-    [["public", "Synlig for alle"], ["private", "🔒 Bare meg"]].forEach(function (pair) {
+    [["public", "Synlig for alle"], ["private", "🔒 Bare meg"]].forEach(function (pair, i) {
       var b = document.createElement("button");
       b.type = "button";
       b.textContent = pair[1];
-      b.className = (state._newSpot.visibility || "public") === pair[0] ? "on" : "";
+      var isOn = (state._newSpot.visibility || "public") === pair[0];
+      b.className = isOn ? (i === 1 ? "on warm" : "on") : "";
       b.addEventListener("click", function () { state._newSpot.visibility = pair[0]; renderPanel(); });
       visRow.appendChild(b);
     });
