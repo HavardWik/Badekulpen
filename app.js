@@ -218,8 +218,7 @@
       var shared = state.spots.filter(function (s) { return s.id === state.sharedSpotId; })[0];
       if (shared) {
         state._sharedSpotOpened = true;
-        selectSpot(shared.id);
-        hasFitOnce = false; // make sure a private spot far from the default view is reachable
+        selectSpot(shared.id); // also flies the map to it, wherever it is
       }
     }
     render();
@@ -466,8 +465,28 @@
     state.selectedId = id;
     state.formMode = null;
     state.view = "map";
+    hasFitOnce = true; // a deliberate selection wins over the initial "show everything" fit
     sidePanel.classList.add("open");
     render();
+    var spot = state.spots.filter(function (s) { return s.id === id; })[0];
+    if (spot) zoomToSpot(spot);
+  }
+
+  // Fly to a spot. Never zooms *out* if you're already closer than 15. On
+  // phones the details sheet covers the bottom of the map, so aim a bit lower
+  // to land the spot in the visible area above the sheet.
+  function zoomToSpot(spot) {
+    if (typeof spot.lat !== "number" || typeof spot.lon !== "number") return;
+    setTimeout(function () { // after render() has made the map visible again (e.g. coming from the list)
+      map.invalidateSize();
+      var zoom = Math.max(map.getZoom(), 15);
+      var target = L.latLng(spot.lat, spot.lon);
+      if (window.matchMedia("(max-width: 820px)").matches) {
+        var pt = map.project(target, zoom).add([0, sidePanel.offsetHeight / 2]);
+        target = map.unproject(pt, zoom);
+      }
+      map.flyTo(target, zoom, { duration: 0.8 });
+    }, 0);
   }
 
   // ---------------- Rendering ----------------
