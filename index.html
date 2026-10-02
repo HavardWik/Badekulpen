@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Badeplassen</title>
-<meta name="description" content="Finn, sjekk inn og vurder badeplasser i Bergen og Bærum (og etter hvert hele Norge) sammen med venner og familie.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230B3C5D'/%3E%3Cpath d='M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='8' r='3' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
+<title>Badekulpen</title>
+<meta name="description" content="Badekulpen — finn, sjekk inn og vurder badeplasser og saunaer i hele Norge sammen med venner og familie.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23F3B23E'/%3E%3Cpath d='M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0' stroke='%230B2942' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='8' r='3' stroke='%230B2942' stroke-width='1.8' fill='white'/%3E%3C/svg%3E">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,6 +35,13 @@
     --low: #BD5339;
     --shadow: rgba(11, 41, 66, 0.14);
     --radius-card: 16px;
+    --marker-new: #3FA9E0;
+    --hdr-bg: #0B3C5D;
+    --hdr-ink: #FFFFFF;
+    --hdr-ink-soft: rgba(255,255,255,.72);
+    --hdr-tab-bg: rgba(255,255,255,.12);
+    --sun-ink: #0B2942;
+    --sun-text: #8A5A00;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -44,6 +51,7 @@
       --accent-soft: #163B52; --warm: #ED9465; --warm-soft: #3A2A1E;
       --sun: #F3C05C; --sun-soft: #3A2E12;
       --good: #57C486; --mid: #DEBB5B; --low: #DE7F65; --shadow: rgba(0,0,0,0.45);
+      --hdr-bg: #0B3C5D; --sun-text: #F3C05C;
     }
   }
   :root[data-theme="dark"] {
@@ -53,6 +61,7 @@
     --accent-soft: #163B52; --warm: #ED9465; --warm-soft: #3A2A1E;
     --sun: #F3C05C; --sun-soft: #3A2E12;
     --good: #57C486; --mid: #DEBB5B; --low: #DE7F65; --shadow: rgba(0,0,0,0.45);
+      --hdr-bg: #0B3C5D; --sun-text: #F3C05C;
   }
 
   * { box-sizing: border-box; }
@@ -74,40 +83,57 @@
   .btn-sm { padding: 6px 11px; font-size: 12.5px; }
 
   header.topbar {
-    display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border);
-    background: var(--surface); flex-wrap: wrap; position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 14px; padding: 12px 18px 10px;
+    background: var(--hdr-bg); color: var(--hdr-ink); flex-wrap: wrap; position: sticky; top: 0; z-index: 30;
   }
-  .brand { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
+  /* Playful scalloped "wave" hanging off the bottom of the header. */
+  header.topbar::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -11px; height: 12px; pointer-events: none;
+    background: var(--hdr-bg);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 12'%3E%3Cpath d='M0 0H48V3C42 3 42 11 36 11S30 3 24 3 18 11 12 11 6 3 0 3Z'/%3E%3C/svg%3E") repeat-x 0 0 / 48px 12px;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 12'%3E%3Cpath d='M0 0H48V3C42 3 42 11 36 11S30 3 24 3 18 11 12 11 6 3 0 3Z'/%3E%3C/svg%3E") repeat-x 0 0 / 48px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; margin-right: 6px; }
   .brand-mark {
-    width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(160deg, var(--accent), #062338);
+    width: 40px; height: 40px; border-radius: 13px; background: var(--sun);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    box-shadow: 0 3px 0 rgba(0,0,0,.18); transform: rotate(-4deg);
   }
-  .brand-mark svg { width: 19px; height: 19px; }
-  .brand-text h1 { font-size: 19px; color: var(--ink); }
-  .brand-text p { margin: 0; font-size: 11.5px; color: var(--ink-faint); }
+  .brand-mark svg { width: 24px; height: 24px; }
+  .brand-text h1 { font-size: 23px; color: var(--hdr-ink); font-weight: 700; }
+  .brand-text p { margin: 1px 0 0; font-size: 12px; color: var(--sun); font-weight: 500; }
 
-  .view-tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 999px; }
+  .view-tabs { display: flex; gap: 2px; background: var(--hdr-tab-bg); padding: 4px; border-radius: 999px; }
   .view-tabs button {
-    appearance: none; border: none; background: transparent; padding: 7px 13px; border-radius: 999px;
-    font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; font-family: inherit;
+    appearance: none; border: none; background: transparent; padding: 8px 15px; border-radius: 999px;
+    font-size: 13.5px; font-weight: 600; color: var(--hdr-ink-soft); cursor: pointer; font-family: inherit;
+    transition: background .15s ease, color .15s ease;
   }
-  .view-tabs button.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px var(--shadow); }
+  .view-tabs button:hover { color: var(--hdr-ink); }
+  .view-tabs button.active { background: var(--sun); color: var(--sun-ink); box-shadow: 0 2px 0 rgba(0,0,0,.18); }
 
   .topbar-spacer { flex: 1; }
+
+  header.topbar .btn { background: var(--hdr-tab-bg); border-color: rgba(255,255,255,.25); color: var(--hdr-ink); }
+  header.topbar .btn-accent {
+    background: var(--sun); border-color: var(--sun); color: var(--sun-ink); box-shadow: 0 3px 0 rgba(0,0,0,.2);
+  }
+  header.topbar .btn-accent:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.2); }
+  header.topbar .btn-ghost { background: transparent; border-color: transparent; }
 
   .auth-area { display: flex; align-items: center; gap: 8px; }
   .viewer-chip {
     display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border-radius: 999px;
-    border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; color: var(--ink-soft);
+    border: 1px solid rgba(255,255,255,.25); background: var(--hdr-tab-bg); font-size: 12.5px; color: var(--hdr-ink);
   }
   .viewer-chip img { width: 24px; height: 24px; border-radius: 50%; display: block; background: var(--surface-2); }
 
   main.layout { flex: 1; display: flex; min-height: 0; position: relative; }
-  .map-pane { flex: 1; position: relative; min-width: 0; background: var(--bg); }
+  .map-pane { flex: 1; position: relative; min-width: 0; background: var(--bg); isolation: isolate; }
   #map { width: 100%; height: 100%; background: var(--surface-2); }
   .leaflet-popup, .leaflet-control-attribution { font-family: "Work Sans", sans-serif; font-size: 11px; }
 
-  .map-toolbar { position: absolute; top: 14px; left: 14px; right: 66px; display: flex; gap: 8px; z-index: 500; flex-wrap: wrap; }
+  .map-toolbar { position: absolute; top: 24px; left: 14px; right: 66px; display: flex; gap: 8px; z-index: 500; flex-wrap: wrap; }
   .search-box {
     flex: 1; min-width: 160px; max-width: 280px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 999px; padding: 8px 14px; font-size: 13.5px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow);
@@ -137,12 +163,12 @@
   }
   .map-legend b { color: var(--ink); display: block; margin-bottom: 4px; font-size: 12px; }
   .legend-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
 
   .sauna-marker { background: transparent; border: none; }
   .sauna-marker-inner {
-    width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2);
-    display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+    width: 30px; height: 30px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2);
+    display: flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1;
   }
 
   @keyframes marker-pop-in {
@@ -151,7 +177,8 @@
     to { transform: scale(1); opacity: 1; }
   }
   .marker-pop-in { animation: marker-pop-in .4s cubic-bezier(.34,1.56,.64,1); }
-  path.marker-pop-in { transform-box: fill-box; transform-origin: center; }
+  path.marker-pop-in { transform-box: fill-box; transform-origin: center; filter: drop-shadow(0 2px 2px rgba(0,0,0,.45)); }
+  .sauna-marker-inner { box-shadow: 0 2px 4px rgba(0,0,0,.45); }
 
   .type-toggle { display: flex; gap: 6px; margin-bottom: 4px; }
   .type-toggle button {
@@ -175,10 +202,10 @@
   .panel-content { padding: 20px; }
   .panel-close { display: none; }
 
-  .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); color: var(--ink-soft); border-radius: 999px; padding: 4px 10px; font-size: 11.5px; font-weight: 600; }
-  .chip.official { background: var(--accent-soft); color: var(--accent); }
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 5px 11px; font-size: 11.5px; font-weight: 600; }
+  .chip.official { background: var(--sun-soft); color: var(--sun-text); }
 
-  .spot-title { font-size: 22px; margin: 10px 0 4px; }
+  .spot-title { font-size: 28px; font-weight: 700; margin: 12px 0 6px; line-height: 1.1; }
   .spot-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
   .spot-desc { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; margin-bottom: 14px; }
 
@@ -192,13 +219,14 @@
 
   .facility-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
 
-  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); margin: 18px 0 8px; }
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin: 20px 0 8px; }
 
   .star-picker { display: flex; gap: 4px; margin-bottom: 10px; }
-  .star-picker button { appearance: none; border: none; background: none; font-size: 24px; cursor: pointer; color: var(--border); padding: 0; line-height: 1; }
-  .star-picker button.on { color: var(--sun); }
+  .star-picker button { appearance: none; border: none; background: none; font-size: 28px; cursor: pointer; color: var(--ink-faint); opacity: .45; padding: 0; line-height: 1; transition: transform .12s ease, opacity .12s ease; }
+  .star-picker button:hover { transform: scale(1.2) rotate(-6deg); opacity: 1; }
+  .star-picker button.on { color: var(--sun); opacity: 1; }
 
-  textarea, input[type=text] {
+  textarea, input[type=text], .side-panel select {
     width: 100%; font-family: inherit; font-size: 13.5px; color: var(--ink); background: var(--bg);
     border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; resize: vertical;
     transition: border-color .12s ease, box-shadow .12s ease;
@@ -313,13 +341,13 @@
   <div class="brand">
     <div class="brand-mark">
       <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
-        <path d="M2 21c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".55"/>
-        <circle cx="12" cy="7" r="3.4" stroke="#fff" stroke-width="1.8"/>
+        <path d="M2 16c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#0B2942" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M2 20.5c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#0B2942" stroke-width="2.2" stroke-linecap="round" opacity=".5"/>
+        <circle cx="12" cy="7.5" r="3.6" fill="#fff" stroke="#0B2942" stroke-width="2"/>
       </svg>
     </div>
     <div class="brand-text">
-      <h1>Badeplassen</h1>
+      <h1>Badekulpen</h1>
       <p id="tagline">For de som er ekstra glad i bading</p>
     </div>
   </div>
@@ -372,9 +400,9 @@
     <div id="map"></div>
     <div class="map-legend">
       <b>Tegnforklaring</b>
-      <div class="legend-row"><span class="legend-dot" style="background:var(--good)"></span> Høyt vurdert (4,5+)</div>
-      <div class="legend-row"><span class="legend-dot" style="background:var(--mid)"></span> Vurdert</div>
-      <div class="legend-row"><span class="legend-dot" style="background:var(--accent)"></span> Ingen vurderinger enda</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#34C17A"></span> Høyt vurdert (4,5+)</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#F3B23E"></span> Vurdert</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#3FA9E0"></span> Ingen vurderinger enda</div>
       <div class="legend-row"><span>♨️</span> Sauna</div>
     </div>
   </div>
@@ -411,6 +439,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 
-<script src="app.js"></script>
+<script src="app.js?v=2026-10-02b"></script>
 </body>
 </html>

@@ -53,11 +53,13 @@
     return s;
   }
 
+  // Marker colours sit on satellite imagery in both light and dark theme, so
+  // they're fixed bright values (kept in sync with the legend in index.html).
   function ratingColor(avg, count) {
-    if (!count) return "#1B6E8C";
-    if (avg >= 4.5) return "#2E8C58";
-    if (avg >= 3) return "#C99A33";
-    return "#BD5339";
+    if (!count) return "#3FA9E0";
+    if (avg >= 4.5) return "#34C17A";
+    if (avg >= 3) return "#F3B23E";
+    return "#E5664A";
   }
 
   // Resizes/compresses an image file in the browser (no upload, no server)
@@ -417,16 +419,16 @@
           icon: L.divIcon({
             className: "sauna-marker",
             html: '<div class="sauna-marker-inner marker-pop-in" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
-            iconSize: [28, 28],
-            iconAnchor: [14, 14]
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
           })
         });
       } else {
-        var radius = 7 + Math.min(agg.count, 9);
+        var radius = 9 + Math.min(agg.count, 7);
         marker = L.circleMarker([s.lat, s.lon], {
           radius: radius,
           color: "#fff",
-          weight: 2,
+          weight: 3,
           fillColor: color,
           fillOpacity: dimmed ? 0.25 : 0.95,
           opacity: dimmed ? 0.25 : 1,
