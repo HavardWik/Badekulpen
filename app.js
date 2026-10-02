@@ -389,6 +389,7 @@
 
   var markerLayer = L.layerGroup().addTo(map);
   var hasFitOnce = false;
+  var pendingFlyTo = false;
 
   map.on("click", function (e) {
     if (!state.placing) return;
@@ -435,7 +436,11 @@
       marker.addTo(markerLayer);
     });
 
-    if (!hasFitOnce && visible.length) {
+    if (pendingFlyTo && visible.length) {
+      pendingFlyTo = false;
+      var flyBounds = L.latLngBounds(visible.filter(function (s) { return typeof s.lat === "number"; }).map(function (s) { return [s.lat, s.lon]; }));
+      if (flyBounds.isValid()) { map.flyToBounds(flyBounds.pad(0.35), { maxZoom: 13, duration: 0.7 }); hasFitOnce = true; }
+    } else if (!hasFitOnce && visible.length) {
       var bounds = L.latLngBounds(visible.filter(function (s) { return typeof s.lat === "number"; }).map(function (s) { return [s.lat, s.lon]; }));
       if (bounds.isValid()) { map.fitBounds(bounds.pad(0.25)); hasFitOnce = true; }
     }
@@ -1412,9 +1417,14 @@
     state.fylkeFilter = fylkeFilterEl.value;
     state.kommuneFilter = "all";
     populateKommuneFilter();
+    pendingFlyTo = true;
     render();
   });
-  kommuneFilterEl.addEventListener("change", function () { state.kommuneFilter = kommuneFilterEl.value; render(); });
+  kommuneFilterEl.addEventListener("change", function () {
+    state.kommuneFilter = kommuneFilterEl.value;
+    pendingFlyTo = true;
+    render();
+  });
   typeFilterEl.addEventListener("change", function () { state.typeFilter = typeFilterEl.value; render(); });
   sharedBannerClose.addEventListener("click", clearSharedList);
 
