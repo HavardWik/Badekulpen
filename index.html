@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Badeplassen</title>
+<meta name="description" content="Finn, sjekk inn og vurder badeplasser i Bergen (og etter hvert hele Norge) sammen med venner og familie.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%231b6e8c'/%3E%3Cpath d='M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='8' r='3' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+<style>
+  :root {
+    --bg: #F6F1E6;
+    --surface: #FFFFFF;
+    --surface-2: #EEE6D3;
+    --ink: #142A30;
+    --ink-soft: #55696E;
+    --ink-faint: #8B9A9D;
+    --border: #DCD1B7;
+    --accent: #1B6E8C;
+    --accent-ink: #FFFFFF;
+    --accent-soft: #E1EFF1;
+    --warm: #DD7240;
+    --warm-soft: #FBE6D8;
+    --good: #2E8C58;
+    --mid: #C99A33;
+    --low: #BD5339;
+    --shadow: rgba(20, 42, 48, 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1E22; --surface: #16282D; --surface-2: #1D353B;
+      --ink: #E9F1F0; --ink-soft: #9FB3B5; --ink-faint: #6D8285;
+      --border: #2A4046; --accent: #5FB7D4; --accent-ink: #062027;
+      --accent-soft: #163A41; --warm: #ED9465; --warm-soft: #3A2A1E;
+      --good: #57C486; --mid: #DEBB5B; --low: #DE7F65; --shadow: rgba(0,0,0,0.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E1E22; --surface: #16282D; --surface-2: #1D353B;
+    --ink: #E9F1F0; --ink-soft: #9FB3B5; --ink-faint: #6D8285;
+    --border: #2A4046; --accent: #5FB7D4; --accent-ink: #062027;
+    --accent-soft: #163A41; --warm: #ED9465; --warm-soft: #3A2A1E;
+    --good: #57C486; --mid: #DEBB5B; --low: #DE7F65; --shadow: rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: "Work Sans", system-ui, sans-serif; height: 100%; }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  h1, h2, h3 { font-family: "Fraunces", serif; margin: 0; letter-spacing: -0.01em; }
+  button { font-family: inherit; }
+  .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+    padding: 9px 14px; border-radius: 999px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; transition: transform .08s ease, box-shadow .15s ease; white-space: nowrap;
+  }
+  .btn:hover { box-shadow: 0 2px 10px var(--shadow); }
+  .btn:active { transform: scale(0.97); }
+  .btn-accent { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn-warm { background: var(--warm); border-color: var(--warm); color: #fff; }
+  .btn-ghost { background: transparent; border-color: transparent; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-sm { padding: 6px 11px; font-size: 12.5px; }
+
+  header.topbar {
+    display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border);
+    background: var(--surface); flex-wrap: wrap; position: sticky; top: 0; z-index: 20;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(160deg, var(--accent), #0e4f66);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .brand-mark svg { width: 19px; height: 19px; }
+  .brand-text h1 { font-size: 19px; color: var(--ink); }
+  .brand-text p { margin: 0; font-size: 11.5px; color: var(--ink-faint); }
+
+  .view-tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 999px; }
+  .view-tabs button {
+    appearance: none; border: none; background: transparent; padding: 7px 13px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; font-family: inherit;
+  }
+  .view-tabs button.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px var(--shadow); }
+
+  .topbar-spacer { flex: 1; }
+
+  .auth-area { display: flex; align-items: center; gap: 8px; }
+  .viewer-chip {
+    display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; color: var(--ink-soft);
+  }
+  .viewer-chip img { width: 24px; height: 24px; border-radius: 50%; display: block; background: var(--surface-2); }
+
+  main.layout { flex: 1; display: flex; min-height: 0; position: relative; }
+  .map-pane { flex: 1; position: relative; min-width: 0; background: var(--bg); }
+  #map { width: 100%; height: 100%; background: var(--surface-2); }
+  .leaflet-popup, .leaflet-control-attribution { font-family: "Work Sans", sans-serif; font-size: 11px; }
+
+  .map-toolbar { position: absolute; top: 14px; left: 14px; right: 66px; display: flex; gap: 8px; z-index: 500; flex-wrap: wrap; }
+  .search-box {
+    flex: 1; min-width: 160px; max-width: 280px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; font-size: 13.5px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow);
+  }
+  select.city-filter {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px;
+    font-size: 13px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow); font-family: inherit;
+  }
+
+  .map-legend {
+    position: absolute; left: 14px; bottom: 14px; z-index: 500; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 12px; font-size: 11.5px; color: var(--ink-soft); box-shadow: 0 2px 10px var(--shadow);
+    max-width: 210px; line-height: 1.5;
+  }
+  .map-legend b { color: var(--ink); display: block; margin-bottom: 4px; font-size: 12px; }
+  .legend-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+
+  .add-banner {
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 600; background: var(--ink); color: var(--bg);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 16px var(--shadow);
+  }
+  .add-banner button { background: transparent; border: 1px solid rgba(255,255,255,.4); color: inherit; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+
+  .side-panel { width: 380px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; }
+  .panel-empty { padding: 40px 24px; color: var(--ink-faint); font-size: 13.5px; text-align: center; }
+  .panel-empty svg { width: 40px; height: 40px; margin-bottom: 10px; opacity: .5; }
+  .panel-content { padding: 20px; }
+  .panel-close { display: none; }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); color: var(--ink-soft); border-radius: 999px; padding: 4px 10px; font-size: 11.5px; font-weight: 600; }
+  .chip.official { background: var(--accent-soft); color: var(--accent); }
+
+  .spot-title { font-size: 22px; margin: 10px 0 4px; }
+  .spot-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .spot-desc { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; margin-bottom: 14px; }
+
+  .rating-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .stars { color: var(--mid); font-size: 17px; letter-spacing: 1px; }
+  .rating-num { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .rating-count { font-size: 12px; color: var(--ink-faint); }
+
+  .facility-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); margin: 18px 0 8px; }
+
+  .star-picker { display: flex; gap: 4px; margin-bottom: 10px; }
+  .star-picker button { appearance: none; border: none; background: none; font-size: 24px; cursor: pointer; color: var(--border); padding: 0; line-height: 1; }
+  .star-picker button.on { color: var(--mid); }
+
+  textarea, input[type=text] {
+    width: 100%; font-family: inherit; font-size: 13.5px; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; resize: vertical;
+  }
+  textarea:focus, input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.field-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); display: block; margin: 10px 0 5px; }
+
+  .checkin-row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .checkin-row:first-of-type { border-top: none; }
+  .checkin-row img { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; background: var(--surface-2); }
+  .checkin-body { flex: 1; min-width: 0; }
+  .checkin-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+  .checkin-name { font-weight: 700; font-size: 13px; }
+  .checkin-time { font-size: 11px; color: var(--ink-faint); }
+  .checkin-stars { color: var(--mid); font-size: 12.5px; }
+  .checkin-comment { font-size: 13px; color: var(--ink-soft); margin-top: 2px; line-height: 1.45; }
+  .checkin-del { background: none; border: none; color: var(--ink-faint); cursor: pointer; font-size: 11px; margin-top: 3px; padding: 0; }
+
+  .inline-banner { font-size: 12.5px; padding: 9px 12px; border-radius: 10px; margin-bottom: 14px; background: var(--warm-soft); color: var(--low); border: 1px solid transparent; }
+  .inline-banner.info { background: var(--accent-soft); color: var(--accent); }
+
+  .list-view { flex: 1; overflow-y: auto; padding: 18px 22px 60px; }
+  .list-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .list-group-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); margin: 22px 0 8px; }
+  .spot-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; cursor: pointer; transition: box-shadow .15s ease; }
+  .spot-row:hover { box-shadow: 0 2px 10px var(--shadow); }
+  .spot-row-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .spot-row-main { flex: 1; min-width: 0; }
+  .spot-row-name { font-weight: 700; font-size: 14.5px; }
+  .spot-row-sub { font-size: 12px; color: var(--ink-faint); margin-top: 1px; }
+  .spot-row-rating { text-align: right; flex-shrink: 0; }
+
+  .mine-view { flex: 1; overflow-y: auto; padding: 18px 22px 60px; max-width: 640px; }
+  .mine-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+  .mine-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .mine-card-spot { font-weight: 700; font-size: 14.5px; cursor: pointer; }
+  .mine-card-spot:hover { text-decoration: underline; }
+  .mine-stats { display: flex; gap: 22px; margin-bottom: 20px; flex-wrap: wrap; }
+  .mine-stat b { display: block; font-size: 24px; font-family: "Fraunces", serif; }
+  .mine-stat span { font-size: 11.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .05em; }
+
+  .facility-input-hint { font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
+
+  .setup-screen {
+    position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .setup-card { max-width: 560px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px 30px; box-shadow: 0 8px 30px var(--shadow); }
+  .setup-card h2 { margin-bottom: 10px; }
+  .setup-card p { font-size: 14px; color: var(--ink-soft); line-height: 1.6; }
+  .setup-card code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; font-size: 12.5px; }
+
+  @media (max-width: 820px) {
+    .side-panel {
+      position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 78vh; border-left: none;
+      border-top: 1px solid var(--border); border-radius: 18px 18px 0 0; box-shadow: 0 -6px 24px var(--shadow);
+      z-index: 700; transform: translateY(100%); transition: transform .22s ease;
+    }
+    .side-panel.open { transform: translateY(0); }
+    .panel-close { display: block; width: 36px; height: 4px; background: var(--border); border-radius: 4px; margin: 10px auto 0; }
+    .brand-text p { display: none; }
+    .view-tabs button { padding: 7px 10px; }
+    .map-toolbar { right: 14px; }
+  }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M2 21c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".55"/>
+        <circle cx="12" cy="7" r="3.4" stroke="#fff" stroke-width="1.8"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <h1>Badeplassen</h1>
+      <p id="tagline">Badeplasser i Bergen · flere på vei</p>
+    </div>
+  </div>
+
+  <div class="view-tabs" role="tablist">
+    <button data-view="map" class="active">Kart</button>
+    <button data-view="list">Liste</button>
+    <button data-view="mine">Mine turer</button>
+  </div>
+
+  <div class="topbar-spacer"></div>
+  <button class="btn btn-accent" id="addSpotBtn">+ Legg til badeplass</button>
+
+  <div class="auth-area" id="authArea">
+    <button class="btn" id="signInBtn">Logg inn med Google</button>
+    <div class="viewer-chip" id="viewerChip" style="display:none">
+      <img id="viewerAvatar" src="" alt="">
+      <span id="viewerName"></span>
+      <button class="btn-ghost btn btn-sm" id="signOutBtn" style="padding:2px 8px">Logg ut</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <div class="map-pane" id="mapPane">
+    <div class="map-toolbar">
+      <input type="text" class="search-box" id="searchBox" placeholder="Søk etter badeplass…">
+      <select class="city-filter" id="cityFilter">
+        <option value="all">Alle byer</option>
+      </select>
+    </div>
+    <div class="add-banner" id="addBanner" style="display:none">
+      <span>Klikk i kartet der badeplassen ligger</span>
+      <button id="cancelAdd">Avbryt</button>
+    </div>
+    <div id="map"></div>
+    <div class="map-legend">
+      <b>Tegnforklaring</b>
+      <div class="legend-row"><span class="legend-dot" style="background:var(--good)"></span> Høyt vurdert (4,5+)</div>
+      <div class="legend-row"><span class="legend-dot" style="background:var(--mid)"></span> Vurdert</div>
+      <div class="legend-row"><span class="legend-dot" style="background:var(--accent)"></span> Ingen vurderinger enda</div>
+    </div>
+  </div>
+
+  <aside class="side-panel" id="sidePanel">
+    <div class="panel-close" id="panelClose"></div>
+    <div id="panelBody">
+      <div class="panel-empty">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 21s-7-5.2-7-11a7 7 0 0 1 14 0c0 5.8-7 11-7 11Z" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="10" r="2.4" stroke="currentColor" stroke-width="1.5"/></svg>
+        <div>Velg en badeplass i kartet eller listen for å se detaljer, sjekke inn og lese vurderinger.</div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="list-view" id="listView" style="display:none"></section>
+  <section class="mine-view" id="mineView" style="display:none"></section>
+</main>
+
+<script src="firebase-config.js"></script>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+
+<script src="app.js"></script>
+</body>
+</html>
