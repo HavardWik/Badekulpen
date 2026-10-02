@@ -136,6 +136,7 @@
   .leaflet-popup, .leaflet-control-attribution { font-family: "Work Sans", sans-serif; font-size: 11px; }
 
   .map-toolbar { position: absolute; top: 24px; left: 14px; right: 66px; display: flex; gap: 8px; z-index: 500; flex-wrap: wrap; }
+  .filter-toggle { display: none; }
   .search-box {
     flex: 1; min-width: 160px; max-width: 280px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 999px; padding: 8px 14px; font-size: 13.5px; color: var(--ink); box-shadow: 0 2px 10px var(--shadow);
@@ -327,9 +328,38 @@
       margin: 0 auto; padding: 14px 30px; background-clip: content-box; box-sizing: content-box;
     }
     .brand-text p { display: none; }
-    .view-tab-groups { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; gap: 8px; }
-    .view-tabs button { padding: 10px 13px; white-space: nowrap; flex-shrink: 0; }
-    .map-toolbar { right: 14px; }
+    .hide-mobile { display: none; }
+
+    /* Row 1: logo · name ........ [+] [avatar]   Row 2: [Kart|Liste] [Mine badeplasser|Mine turer] */
+    header.topbar { padding: 10px 12px 8px; gap: 8px 10px; }
+    .brand { order: 1; gap: 9px; }
+    .brand-mark { width: 34px; height: 34px; border-radius: 11px; }
+    .brand-mark svg { width: 20px; height: 20px; }
+    .brand-text h1 { font-size: 20px; }
+    .topbar-spacer { order: 2; }
+    #addSpotBtn { order: 3; width: 40px; height: 40px; padding: 0; justify-content: center; font-size: 22px; line-height: 1; }
+    .auth-area { order: 4; }
+    #viewerName { display: none; }
+    .viewer-chip { padding: 3px 6px 3px 3px; }
+    .viewer-chip img { width: 30px; height: 30px; }
+    .view-tab-groups { order: 5; flex-basis: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; gap: 6px; }
+    .view-tabs { padding: 3px; gap: 0; }
+    .view-tabs button { padding: 8px 10px; font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+
+    /* Search + "Filter" on one line; the three dropdowns only when opened. Leave room for the layer button. */
+    .map-toolbar { top: 22px; left: 12px; right: 62px; gap: 6px; }
+    .search-box { min-width: 0; max-width: none; }
+    .filter-toggle {
+      display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-family: inherit; font-size: 13px; font-weight: 600;
+      background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 999px; padding: 8px 14px;
+      box-shadow: 0 2px 10px var(--shadow); cursor: pointer;
+    }
+    .filter-count:not(:empty) {
+      background: var(--accent); color: var(--accent-ink); border-radius: 999px; min-width: 18px; height: 18px;
+      font-size: 11px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
+    }
+    .map-toolbar select.filter-select { display: none; }
+    .map-toolbar.filters-open select.filter-select { display: block; flex: 1 1 30%; max-width: none; min-width: 0; }
     .btn { padding: 10px 16px; }
     .btn-sm { padding: 7px 12px; }
   }
@@ -367,10 +397,10 @@
   </nav>
 
   <div class="topbar-spacer"></div>
-  <button class="btn btn-accent" id="addSpotBtn">+ Legg til badeplass</button>
+  <button class="btn btn-accent" id="addSpotBtn" aria-label="Legg til badeplass">+<span class="hide-mobile">&nbsp;Legg til badeplass</span></button>
 
   <div class="auth-area" id="authArea">
-    <button class="btn" id="signInBtn">Logg inn med Google</button>
+    <button class="btn" id="signInBtn">Logg inn<span class="hide-mobile">&nbsp;med Google</span></button>
     <div class="viewer-chip" id="viewerChip" style="display:none">
       <img id="viewerAvatar" src="" alt="">
       <span id="viewerName"></span>
@@ -388,6 +418,7 @@
   <div class="map-pane" id="mapPane">
     <div class="map-toolbar">
       <input type="text" class="search-box" id="searchBox" placeholder="Søk etter badeplass…">
+      <button type="button" class="filter-toggle" id="filterToggle" aria-expanded="false">Filter<span class="filter-count" id="filterCount"></span></button>
       <select class="filter-select" id="fylkeFilter">
         <option value="all">Alle fylker</option>
       </select>
@@ -446,6 +477,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 
-<script src="app.js?v=2026-10-02c"></script>
+<script src="app.js?v=2026-10-02d"></script>
 </body>
 </html>

@@ -481,9 +481,15 @@
       map.invalidateSize();
       var zoom = Math.max(map.getZoom(), 15);
       var target = L.latLng(spot.lat, spot.lon);
+      var box = map.getContainer().getBoundingClientRect();
+      var top = mapToolbar ? Math.max(0, mapToolbar.getBoundingClientRect().bottom - box.top) : 0;
+      var bottom = box.height;
       if (window.matchMedia("(max-width: 820px)").matches) {
-        var pt = map.project(target, zoom).add([0, sidePanel.offsetHeight / 2]);
-        target = map.unproject(pt, zoom);
+        bottom = Math.min(bottom, (window.innerHeight - sidePanel.offsetHeight) - box.top); // sheet may still be sliding in
+      }
+      if (bottom - top > 40) {
+        var shift = box.height / 2 - (top + bottom) / 2;
+        target = map.unproject(map.project(target, zoom).add([0, shift]), zoom);
       }
       map.flyTo(target, zoom, { duration: 0.8 });
     }, 0);
@@ -491,6 +497,7 @@
 
   // ---------------- Rendering ----------------
   function render() {
+    renderFilterCount();
     renderSharedBanner();
     renderTabs();
     renderMap();
@@ -1450,6 +1457,20 @@
     render();
   });
   typeFilterEl.addEventListener("change", function () { state.typeFilter = typeFilterEl.value; render(); });
+
+  // Phones: the three dropdowns hide behind a "Filter" button (CSS); the badge counts active filters.
+  var filterToggle = document.getElementById("filterToggle");
+  var filterCount = document.getElementById("filterCount");
+  var mapToolbar = document.querySelector(".map-toolbar");
+  filterToggle.addEventListener("click", function () {
+    var open = mapToolbar.classList.toggle("filters-open");
+    filterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  function renderFilterCount() {
+    if (!filterCount) return; // render() can run before this part of the script has executed
+    var n = [state.fylkeFilter, state.kommuneFilter, state.typeFilter].filter(function (v) { return v !== "all"; }).length;
+    filterCount.textContent = n ? String(n) : "";
+  }
   sharedBannerClose.addEventListener("click", clearSharedList);
 
   // ---------------- Shared list via ?liste=<id>, or a single shared spot via ?sted=<id> ----------------
