@@ -122,6 +122,8 @@
     typeFilter: "all",
     formMode: null,
     dbError: null,
+    spotsLoaded: false,
+    spotsError: null,   // only for loading the spots feed; shown as a status pill on the map
     sharedListId: null,   // set when viewing index.html?liste=<id>
     sharedList: null,
     sharedListMissing: false,
@@ -207,6 +209,8 @@
 
   db.collection("spots").onSnapshot(function (snap) {
     state.dbError = null;
+    state.spotsLoaded = true;
+    state.spotsError = null;
     state.spots = snap.docs.map(function (d) {
       var data = d.data() || {};
       data.id = d.id;
@@ -224,6 +228,7 @@
     render();
   }, function (err) {
     state.dbError = dbErrorMessage(err);
+    state.spotsError = "Fikk ikke hentet badeplassene. Sjekk nettforbindelsen og last siden på nytt.";
     render();
   });
 
@@ -393,10 +398,18 @@
   var pendingFlyTo = false;
 
   map.on("click", function (e) {
-    if (!state.placing) return;
+    if (!state.placing) {
+      // tapping empty map leaves an open spot (but never throws away a half-filled "Ny badeplass" form)
+      if (state.selectedId && state.formMode !== "add") closePanel();
+      return;
+    }
     exitPlacing();
     openAddForm(e.latlng.lat, e.latlng.lng);
   });
+
+  // Markers are rebuilt on every render (search keystroke, filter, new check-in...). Only pop a marker in
+  // the first time it appears, otherwise every redraw shrinks all markers to nothing for a moment.
+  var poppedIn = {};
 
   function renderMap() {
     markerLayer.clearLayers();
@@ -412,12 +425,14 @@
       var dimmed = !visibleIds[s.id];
       var color = ratingColor(agg.avg, agg.count);
       var marker;
+      var pop = !poppedIn[s.id];
+      poppedIn[s.id] = true;
 
       if (s.type === "sauna") {
         marker = L.marker([s.lat, s.lon], {
           icon: L.divIcon({
             className: "sauna-marker",
-            html: '<div class="sauna-marker-inner marker-pop-in" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
+            html: '<div class="sauna-marker-inner' + (pop ? ' marker-pop-in' : '') + '" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
             iconSize: [32, 32],
             iconAnchor: [16, 16]
           })
@@ -431,7 +446,8 @@
           fillColor: color,
           fillOpacity: dimmed ? 0.25 : 0.95,
           opacity: dimmed ? 0.25 : 1,
-          className: "marker-pop-in"
+          className: pop ? "marker-pop-in" : "",
+          bubblingMouseEvents: false // a marker tap must not also count as "tapped the map" (which closes the panel)
         });
       }
       marker.on("click", function () { selectSpot(s.id); });
@@ -459,6 +475,7 @@
     state.placing = false;
     addBanner.style.display = "none";
     document.getElementById("map").style.cursor = "";
+    mapPaneEl.classList.remove("placing");
   }
 
   function selectSpot(id) {
@@ -498,6 +515,7 @@
   // ---------------- Rendering ----------------
   function render() {
     renderFilterCount();
+    renderMapStatus();
     renderSharedBanner();
     renderTabs();
     renderMap();
@@ -519,6 +537,17 @@
       renderMine();
     }
     renderPanel();
+    // phones: hide the floating add button while the details sheet is open or while placing a new spot
+    mapPaneEl.classList.toggle("panel-open", sidePanel.classList.contains("open"));
+    mapPaneEl.classList.toggle("placing", !!state.placing);
+  }
+
+  function renderMapStatus() {
+    var el = document.getElementById("mapStatus");
+    if (!el) return;
+    if (state.spotsError) { el.textContent = state.spotsError; el.className = "map-status error"; el.hidden = false; }
+    else if (!state.spotsLoaded) { el.textContent = "Laster badeplasser…"; el.className = "map-status"; el.hidden = false; }
+    else { el.hidden = true; }
   }
 
   function renderTabs() {
@@ -528,6 +557,12 @@
   }
 
   function renderPanel() {
+    renderPanelContent();
+    // the close row (✕, and the drag handle on phones) only when something is open
+    document.getElementById("panelBar").hidden = !!panelBody.querySelector(".panel-empty");
+  }
+
+  function renderPanelContent() {
     var spot = state.spots.filter(function (s) { return s.id === state.selectedId; })[0];
     if (spot && !isSpotVisible(spot)) spot = null;
     panelBody.innerHTML = "";
@@ -1432,18 +1467,30 @@
     });
   });
 
-  document.getElementById("addSpotBtn").addEventListener("click", function () {
+  function startAddSpot() {
     if (!state.myUser) { auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then(function () { enterPlacing(); }); return; }
     state.formMode = null;
     enterPlacing();
-  });
+  }
+  document.getElementById("addSpotBtn").addEventListener("click", startAddSpot);
+  document.getElementById("addSpotFab").addEventListener("click", startAddSpot);
   document.getElementById("cancelAdd").addEventListener("click", exitPlacing);
-  document.getElementById("panelClose").addEventListener("click", function () {
+  function closePanel() {
     sidePanel.classList.remove("open");
-    state.selectedId = null; state.formMode = null;
+    state.selectedId = null; state.formMode = null; state._newSpot = null;
     render();
+  }
+  document.getElementById("panelClose").addEventListener("click", closePanel);
+  document.getElementById("panelCloseBtn").addEventListener("click", closePanel);
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var t = e.target && e.target.tagName;
+    if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return; // the search field handles its own Escape
+    if (photoLightbox.style.display === "flex") { closeLightbox(); return; }
+    if (state.placing) { exitPlacing(); render(); return; }
+    if (state.selectedId || state.formMode) closePanel();
   });
-  searchBox.addEventListener("input", function () { state.search = searchBox.value; render(); });
+  searchBox.addEventListener("input", function () { state.search = searchBox.value; searchActive = -1; render(); renderSearchResults(); });
   fylkeFilterEl.addEventListener("change", function () {
     state.fylkeFilter = fylkeFilterEl.value;
     state.kommuneFilter = "all";
@@ -1462,10 +1509,109 @@
   var filterToggle = document.getElementById("filterToggle");
   var filterCount = document.getElementById("filterCount");
   var mapToolbar = document.querySelector(".map-toolbar");
-  filterToggle.addEventListener("click", function () {
-    var open = mapToolbar.classList.toggle("filters-open");
+  function setFiltersOpen(open) {
+    mapToolbar.classList.toggle("filters-open", open);
     filterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) hideSearchResults();
+  }
+  filterToggle.addEventListener("click", function () { setFiltersOpen(!mapToolbar.classList.contains("filters-open")); });
+  document.getElementById("filterDone").addEventListener("click", function () { setFiltersOpen(false); });
+  document.getElementById("filterReset").addEventListener("click", function () {
+    state.fylkeFilter = "all"; state.kommuneFilter = "all"; state.typeFilter = "all";
+    fylkeFilterEl.value = "all"; typeFilterEl.value = "all";
+    populateKommuneFilter(); kommuneFilterEl.value = "all";
+    pendingFlyTo = true;
+    render();
   });
+
+  // ---------------- Search: live results under the field ----------------
+  var searchResults = document.getElementById("searchResults");
+  var searchHits = [];
+  var searchActive = -1;
+  function hideSearchResults() { searchResults.hidden = true; searchResults.innerHTML = ""; searchActive = -1; }
+  function rankHits(q) {
+    // same matching as the map/list filter, best name matches first
+    return visibleSpots().map(function (s) {
+      var n = (s.name || "").toLowerCase();
+      var rank = n.indexOf(q) === 0 ? 0 : (n.indexOf(q) !== -1 ? 1 : ((s.kommune || "").toLowerCase().indexOf(q) !== -1 ? 2 : 3));
+      return { s: s, rank: rank };
+    }).sort(function (a, b) { return a.rank - b.rank || (a.s.name || "").localeCompare(b.s.name || "", "nb"); })
+      .slice(0, 8).map(function (x) { return x.s; });
+  }
+  function renderSearchResults() {
+    var q = state.search.trim().toLowerCase();
+    if (!q) { hideSearchResults(); return; }
+    searchHits = rankHits(q);
+    searchResults.innerHTML = "";
+    if (!searchHits.length) {
+      var empty = document.createElement("div");
+      empty.className = "search-empty";
+      empty.textContent = !state.spotsLoaded ? "Badeplassene lastes fortsatt inn…" : "Ingen treff for «" + state.search.trim() + "»";
+      searchResults.appendChild(empty);
+    }
+    searchHits.forEach(function (s, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "search-result" + (i === searchActive ? " active" : "");
+      b.setAttribute("role", "option");
+      var dot = document.createElement("span");
+      dot.className = "sr-dot";
+      var agg = aggregateRatings(state.checkins, s.id);
+      dot.style.background = ratingColor(agg.avg, agg.count);
+      var txt = document.createElement("span");
+      var nm = document.createElement("span"); nm.className = "sr-name";
+      nm.textContent = (s.type === "sauna" ? "♨️ " : "") + (s.name || "Badeplass");
+      var sub = document.createElement("span"); sub.className = "sr-sub";
+      sub.textContent = [s.kommune, s.fylke].filter(Boolean).join(" · ");
+      txt.appendChild(nm); txt.appendChild(sub);
+      b.appendChild(dot); b.appendChild(txt);
+      b.addEventListener("click", function () { chooseSearchHit(s); });
+      searchResults.appendChild(b);
+    });
+    searchResults.hidden = false;
+  }
+  function chooseSearchHit(s) {
+    // clear the text so no markers stay dimmed, close the keyboard, then fly to the spot
+    state.search = ""; searchBox.value = "";
+    hideSearchResults();
+    searchBox.blur();
+    selectSpot(s.id);
+  }
+  // keep focus in the field while a result is being tapped (otherwise blur would close the list first)
+  searchResults.addEventListener("pointerdown", function (e) { e.preventDefault(); });
+  searchResults.addEventListener("mousedown", function (e) { e.preventDefault(); });
+  searchBox.addEventListener("focus", function () { setFiltersOpen(false); if (state.search.trim()) renderSearchResults(); });
+  searchBox.addEventListener("blur", function () { setTimeout(hideSearchResults, 150); });
+  searchBox.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var hit = searchHits[searchActive >= 0 ? searchActive : 0];
+      if (state.search.trim() && hit) chooseSearchHit(hit);
+    } else if (e.key === "Escape") {
+      hideSearchResults(); searchBox.blur();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!searchHits.length) return;
+      e.preventDefault();
+      searchActive = (searchActive + (e.key === "ArrowDown" ? 1 : -1) + searchHits.length) % searchHits.length;
+      renderSearchResults();
+    }
+  });
+
+  // ---------------- Legend: collapsible, remembers the choice ----------------
+  var mapLegend = document.getElementById("mapLegend");
+  var legendToggle = document.getElementById("legendToggle");
+  function setLegendOpen(open, remember) {
+    mapLegend.classList.toggle("collapsed", !open);
+    legendToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (remember) { try { localStorage.setItem("badekulpen.legendOpen", open ? "1" : "0"); } catch (e) {} }
+  }
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem("badekulpen.legendOpen"); } catch (e) {}
+    var open = saved === null ? !window.matchMedia("(max-width: 820px)").matches : saved === "1";
+    setLegendOpen(open, false);
+  })();
+  legendToggle.addEventListener("click", function () { setLegendOpen(mapLegend.classList.contains("collapsed"), true); });
   function renderFilterCount() {
     if (!filterCount) return; // render() can run before this part of the script has executed
     var n = [state.fylkeFilter, state.kommuneFilter, state.typeFilter].filter(function (v) { return v !== "all"; }).length;
