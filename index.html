@@ -98,7 +98,7 @@
   .brand-mark {
     width: 40px; height: 40px; border-radius: 13px; background: linear-gradient(160deg, #4F9FD8, #1F6FA8);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    box-shadow: 0 3px 0 rgba(0,0,0,.18); transform: rotate(-4deg);
+    box-shadow: 0 3px 0 rgba(0,0,0,.18);
   }
   .brand-mark svg { width: 24px; height: 24px; }
   .brand-text h1 { font-size: 23px; color: var(--hdr-ink); font-weight: 700; }
@@ -247,6 +247,8 @@
   .add-banner button { background: transparent; border: 1px solid rgba(255,255,255,.4); color: inherit; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 
   .side-panel { width: 380px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; }
+  /* desktop: the details column only appears while a spot (or the add form) is open, so the map gets the full width otherwise */
+  @media (min-width: 821px) { .side-panel:not(.open) { display: none; } }
   .panel-empty { padding: 40px 24px; color: var(--ink-faint); font-size: 13.5px; text-align: center; }
   .panel-empty svg { width: 48px; height: 48px; margin-bottom: 12px; }
   .panel-content { padding: 20px; }
@@ -601,6 +603,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 
-<script src="app.js?v=2026-10-03e"></script>
+<script src="app.js?v=2026-10-03f"></script>
 </body>
 </html>

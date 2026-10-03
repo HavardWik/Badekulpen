@@ -595,11 +595,11 @@
     renderTabs();
     renderMap();
     if (state.view === "map") {
-      mapPaneEl.style.display = "block"; sidePanel.style.display = "block";
+      mapPaneEl.style.display = "block"; sidePanel.style.display = ""; // CSS hides it on desktop until a spot is open
       listView.style.display = "none"; mineView.style.display = "none"; listsView.style.display = "none";
       setTimeout(function () { map.invalidateSize(); }, 0);
     } else if (state.view === "list") {
-      mapPaneEl.style.display = "none"; sidePanel.style.display = "block";
+      mapPaneEl.style.display = "none"; sidePanel.style.display = "";
       listView.style.display = "block"; mineView.style.display = "none"; listsView.style.display = "none";
       renderList();
     } else if (state.view === "lists") {
