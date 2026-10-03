@@ -110,7 +110,9 @@
   // ---------------- State ----------------
   var state = {
     myUser: null,       // firebase.User | null
-    spots: [],
+    spots: [],          // merged: Firestore spots + national file (minus duplicates)
+    fsSpots: [],        // from Firestore
+    nationalSpots: [],  // from badeplasser-norge.json (Kartverket)
     checkins: [],
     lists: [],           // this user's own lists (favorites you can share)
     view: "map",
@@ -120,6 +122,7 @@
     fylkeFilter: "all",
     kommuneFilter: "all",
     typeFilter: "all",
+    waterFilter: "all",  // "saltvann" | "innsjo" | "elv" - badeplasser only (saunas have no water type)
     formMode: null,
     dbError: null,
     spotsLoaded: false,
@@ -152,6 +155,9 @@
   var fylkeFilterEl = document.getElementById("fylkeFilter");
   var kommuneFilterEl = document.getElementById("kommuneFilter");
   var typeFilterEl = document.getElementById("typeFilter");
+  var waterFilterEl = document.getElementById("waterFilter");
+  var WATER_LABELS = { saltvann: "Saltvann", innsjo: "Innsjø", elv: "Elv" };
+  var WATER_TYPES = ["saltvann", "innsjo", "elv"];
   var signInBtn = document.getElementById("signInBtn");
   var signOutBtn = document.getElementById("signOutBtn");
   var viewerChip = document.getElementById("viewerChip");
@@ -183,6 +189,7 @@
   signOutBtn.addEventListener("click", function () { auth.signOut(); });
 
   auth.onAuthStateChanged(function (user) {
+    state.authReady = true;
     state.myUser = user;
     if (user) {
       signInBtn.style.display = "none";
@@ -207,15 +214,43 @@
     return "Noe gikk galt. Prøv igjen.";
   }
 
+  function docsToList(snap) {
+    return snap.docs.map(function (d) { var data = d.data() || {}; data.id = d.id; return data; });
+  }
+
   db.collection("spots").onSnapshot(function (snap) {
+    state.spotsSource = "sdk";
+    applySpots(docsToList(snap));
+  }, function (err) {
+    state.dbError = dbErrorMessage(err);
+    if (!state.spotsLoaded) loadViaRestFallback(); // try the plain REST route before giving up
+    render();
+  });
+
+  function applySpots(list) {
     state.dbError = null;
     state.spotsLoaded = true;
     state.spotsError = null;
-    state.spots = snap.docs.map(function (d) {
-      var data = d.data() || {};
-      data.id = d.id;
-      return data;
+    state.fsSpots = list;
+    mergeSpots();
+  }
+
+  // ---------------- Badeplasser fra hele Norge (static file made by importer-norge.html) ----------------
+  // ~1 400 places from Kartverket. Kept as a file on GitHub Pages rather than in Firestore, so a visit doesn't
+  // cost 1 400 database reads (the free plan allows 50 000 a day). Missing file = app works as before.
+  var DUPLICATE_OF_EXISTING_M = 200;
+  function metresBetween(a, b) {
+    var dy = (a.lat - b.lat) * 111320;
+    var dx = (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function mergeSpots() {
+    var fs = state.fsSpots.filter(function (f) { return typeof f.lat === "number" && typeof f.lon === "number"; });
+    var national = state.nationalSpots.filter(function (n) {
+      for (var i = 0; i < fs.length; i++) if (metresBetween(n, fs[i]) < DUPLICATE_OF_EXISTING_M) return false; // already on the map
+      return true;
     });
+    state.spots = state.fsSpots.concat(national);
     populateFylkeFilter();
     populateKommuneFilter();
     if (state.sharedSpotId && !state._sharedSpotOpened) {
@@ -226,11 +261,22 @@
       }
     }
     render();
-  }, function (err) {
-    state.dbError = dbErrorMessage(err);
-    state.spotsError = "Fikk ikke hentet badeplassene. Sjekk nettforbindelsen og last siden på nytt.";
-    render();
-  });
+  }
+  fetch("badeplasser-norge.json", { cache: "no-cache" }).then(function (r) {
+    if (!r.ok) return null; // not uploaded yet
+    return r.json();
+  }).then(function (file) {
+    if (!file || !Array.isArray(file.spots)) return;
+    state.nationalSpots = file.spots.filter(function (s) { return s && s.id && typeof s.lat === "number" && typeof s.lon === "number"; }).map(function (s) {
+      return {
+        id: s.id, name: s.name, kommune: s.kommune, fylke: s.fylke, lat: s.lat, lon: s.lon,
+        water: s.water, waterGuess: !!s.waterGuess, kind: s.kind,
+        type: "badeplass", visibility: "public", official: true, source: "kartverket"
+      };
+    });
+    map.attributionControl.addAttribution('Badeplasser © <a href="https://www.kartverket.no/" target="_blank" rel="noopener">Kartverket</a>');
+    mergeSpots();
+  }).catch(function () { /* no national file - fine */ });
 
   // A spot is visible in the normal map/list UI to: anyone, if it's public;
   // the person who added it, always; and anyone who opened a direct
@@ -245,13 +291,13 @@
     return false;
   }
 
-  db.collection("checkins").onSnapshot(function (snap) {
-    state.checkins = snap.docs.map(function (d) {
-      var data = d.data() || {};
-      data.id = d.id;
-      return data;
-    }).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+  function applyCheckins(list) {
+    state.checkins = list.sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
     render();
+  }
+  db.collection("checkins").onSnapshot(function (snap) {
+    state.checkinsSource = "sdk";
+    applyCheckins(docsToList(snap));
   }, function (err) {
     state.dbError = dbErrorMessage(err);
     render();
@@ -295,6 +341,7 @@
         if (state.kommuneFilter !== "all" && s.kommune !== state.kommuneFilter) return false;
       }
       if (state.typeFilter !== "all" && (s.type || "badeplass") !== state.typeFilter) return false;
+      if (state.waterFilter !== "all" && s.water !== state.waterFilter) return false; // saunas/unknown only under "Alle"
       if (!q) return true;
       var hay = ((s.name || "") + " " + (s.district || "") + " " + (s.kommune || "") + " " + (s.fylke || "") + " " + (s.desc || "")).toLowerCase();
       return hay.indexOf(q) !== -1;
@@ -323,18 +370,15 @@
     state.sharedList = null;
     state.sharedListMissing = false;
     sharedListUnsub = db.collection("lists").doc(id).onSnapshot(function (doc) {
-      if (doc.exists) {
-        var data = doc.data() || {};
-        data.id = doc.id;
-        state.sharedList = data;
-        state.sharedListMissing = false;
-      } else {
-        state.sharedList = null;
-        state.sharedListMissing = true;
-      }
-      hasFitOnce = false; // re-fit the map to the (new) visible set
-      render();
+      state.sharedListSource = "sdk";
+      applySharedList(doc.exists ? Object.assign({}, doc.data() || {}, { id: doc.id }) : null);
     }, function (err) { state.dbError = dbErrorMessage(err); render(); });
+  }
+  function applySharedList(data) {
+    state.sharedList = data;
+    state.sharedListMissing = !data;
+    hasFitOnce = false; // re-fit the map to the (new) visible set
+    render();
   }
 
   function openSharedList(id, listDataIfKnown) {
@@ -410,49 +454,17 @@
   // Markers are rebuilt on every render (search keystroke, filter, new check-in...). Only pop a marker in
   // the first time it appears, otherwise every redraw shrinks all markers to nothing for a moment.
   var poppedIn = {};
+  var CLUSTER_UNTIL_ZOOM = 12;  // from this zoom and in, every spot gets its own marker
+  var CLUSTER_CELL_PX = 64;     // spots closer than this on screen share a bubble
+  var mapSpots = [];            // what drawMarkers() shows (the visible, filtered spots)
+  var lastMarkerSig = null;
 
   function renderMap() {
-    markerLayer.clearLayers();
-    var spots = state.spots;
-    var visible = visibleSpots();
-    var visibleIds = {};
-    visible.forEach(function (s) { visibleIds[s.id] = true; });
-
-    spots.forEach(function (s) {
-      if (typeof s.lat !== "number" || typeof s.lon !== "number") return;
-      if (!isSpotVisible(s)) return; // someone else's private spot: not shown on your map
-      var agg = aggregateRatings(state.checkins, s.id);
-      var dimmed = !visibleIds[s.id];
-      var color = ratingColor(agg.avg, agg.count);
-      var marker;
-      var pop = !poppedIn[s.id];
-      poppedIn[s.id] = true;
-
-      if (s.type === "sauna") {
-        marker = L.marker([s.lat, s.lon], {
-          icon: L.divIcon({
-            className: "sauna-marker",
-            html: '<div class="sauna-marker-inner' + (pop ? ' marker-pop-in' : '') + '" style="background:' + color + ';opacity:' + (dimmed ? 0.35 : 1) + '">♨️</div>',
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
-          })
-        });
-      } else {
-        var radius = 9 + Math.min(agg.count, 7);
-        marker = L.circleMarker([s.lat, s.lon], {
-          radius: radius,
-          color: "#fff",
-          weight: 3,
-          fillColor: color,
-          fillOpacity: dimmed ? 0.25 : 0.95,
-          opacity: dimmed ? 0.25 : 1,
-          className: pop ? "marker-pop-in" : "",
-          bubblingMouseEvents: false // a marker tap must not also count as "tapped the map" (which closes the panel)
-        });
-      }
-      marker.on("click", function () { selectSpot(s.id); });
-      marker.addTo(markerLayer);
-    });
+    var visible = visibleSpots().filter(function (s) { return typeof s.lat === "number" && typeof s.lon === "number"; });
+    // only rebuild markers when the set or their colours changed (render() also runs for panel clicks etc.)
+    var sig = visible.map(function (s) { var a = aggregateRatings(state.checkins, s.id); return s.id + ":" + a.count + ":" + (a.avg || 0); }).join("|");
+    mapSpots = visible;
+    if (sig !== lastMarkerSig) { lastMarkerSig = sig; drawMarkers(); }
 
     if (pendingFlyTo && visible.length) {
       pendingFlyTo = false;
@@ -463,6 +475,69 @@
       if (bounds.isValid()) { map.fitBounds(bounds.pad(0.25)); hasFitOnce = true; }
     }
   }
+
+  function spotMarker(s) {
+    var agg = aggregateRatings(state.checkins, s.id);
+    var color = ratingColor(agg.avg, agg.count);
+    var pop = !poppedIn[s.id];
+    poppedIn[s.id] = true;
+    var marker;
+    if (s.type === "sauna") {
+      marker = L.marker([s.lat, s.lon], { icon: L.divIcon({
+        className: "sauna-marker",
+        html: '<div class="sauna-marker-inner' + (pop ? ' marker-pop-in' : '') + '" style="background:' + color + '">♨️</div>',
+        iconSize: [32, 32], iconAnchor: [16, 16]
+      }) });
+    } else {
+      var d = 18 + 2 * Math.min(agg.count, 7);
+      marker = L.marker([s.lat, s.lon], { icon: L.divIcon({
+        className: "spot-marker",
+        html: '<div class="spot-dot' + (pop ? ' marker-pop-in' : '') + '" style="background:' + color + '"></div>',
+        iconSize: [d, d], iconAnchor: [d / 2, d / 2]
+      }) });
+    }
+    marker.on("click", function () { selectSpot(s.id); });
+    return marker;
+  }
+
+  function clusterMarker(group) {
+    var lat = 0, lon = 0;
+    group.forEach(function (s) { lat += s.lat; lon += s.lon; });
+    var n = group.length, d = n < 10 ? 36 : n < 100 ? 42 : 50;
+    var marker = L.marker([lat / n, lon / n], { icon: L.divIcon({
+      className: "cluster-marker",
+      html: '<div class="cluster-bubble">' + n + "</div>",
+      iconSize: [d, d], iconAnchor: [d / 2, d / 2]
+    }) });
+    marker.on("click", function () {
+      var b = L.latLngBounds(group.map(function (s) { return [s.lat, s.lon]; }));
+      map.flyToBounds(b.pad(0.3), { maxZoom: Math.max(CLUSTER_UNTIL_ZOOM + 1, map.getZoom() + 2), duration: 0.6 });
+    });
+    return marker;
+  }
+
+  function drawMarkers() {
+    markerLayer.clearLayers();
+    var zoom = map.getZoom();
+    var area = map.getBounds().pad(0.5);
+    var inView = mapSpots.filter(function (s) { return area.contains([s.lat, s.lon]); });
+    if (zoom >= CLUSTER_UNTIL_ZOOM) {
+      inView.forEach(function (s) { spotMarker(s).addTo(markerLayer); });
+      return;
+    }
+    var cells = {}, order = [];
+    inView.forEach(function (s) {
+      var pt = map.project([s.lat, s.lon], zoom);
+      var key = Math.floor(pt.x / CLUSTER_CELL_PX) + ":" + Math.floor(pt.y / CLUSTER_CELL_PX);
+      if (!cells[key]) { cells[key] = []; order.push(key); }
+      cells[key].push(s);
+    });
+    order.forEach(function (k) {
+      var g = cells[k];
+      (g.length === 1 ? spotMarker(g[0]) : clusterMarker(g)).addTo(markerLayer);
+    });
+  }
+  map.on("zoomend moveend", drawMarkers);
 
   function enterPlacing() {
     state.placing = true;
@@ -614,7 +689,18 @@
       sc.textContent = "♨️ Sauna";
       meta.appendChild(sc);
     }
-    if (spot.official) {
+    if (spot.type !== "sauna" && WATER_LABELS[spot.water]) {
+      var wc = document.createElement("span");
+      wc.className = "chip water";
+      wc.textContent = WATER_LABELS[spot.water] + (spot.waterGuess ? " (anslått)" : "");
+      meta.appendChild(wc);
+    }
+    if (spot.source === "kartverket") {
+      var kc = document.createElement("span");
+      kc.className = "chip official";
+      kc.textContent = "Fra Kartverket";
+      meta.appendChild(kc);
+    } else if (spot.official) {
       var oc = document.createElement("span");
       oc.className = "chip official";
       oc.textContent = spot.type === "sauna" ? "✓ Offentlig sauna" : "✓ Kommunal badeplass";
@@ -638,6 +724,11 @@
       desc.className = "spot-desc";
       desc.textContent = spot.desc;
       wrap.appendChild(desc);
+    } else if (spot.source === "kartverket") {
+      var kdesc = document.createElement("div");
+      kdesc.className = "spot-desc";
+      kdesc.textContent = (spot.kind === "strand" ? "Strand" : "Badeplass") + " registrert i Kartverkets stedsnavnregister. Ingen beskrivelse ennå – sjekk inn og fortell hvordan det var!";
+      wrap.appendChild(kdesc);
     }
 
     var agg = aggregateRatings(state.checkins, spot.id);
@@ -723,11 +814,46 @@
       manageLbl.className = "section-label";
       manageLbl.textContent = "Administrer";
       wrap.appendChild(manageLbl);
+      if (!spot.official && spot.type !== "sauna") wrap.appendChild(buildWaterEditor(spot));
       wrap.appendChild(buildShareSpotControl(spot));
       if (!spot.official) wrap.appendChild(buildDeleteSpotControl(spot));
     }
 
     panelBody.appendChild(wrap);
+  }
+
+  function buildWaterToggle(id, current, onPick) {
+    var row = document.createElement("div");
+    row.className = "type-toggle";
+    row.id = id;
+    WATER_TYPES.forEach(function (w) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = WATER_LABELS[w];
+      b.className = current === w ? "on" : "";
+      b.addEventListener("click", function () { onPick(w); });
+      row.appendChild(b);
+    });
+    return row;
+  }
+
+  function buildWaterEditor(spot) {
+    var box = document.createElement("div");
+    box.style.marginBottom = "12px";
+    var lbl = document.createElement("div");
+    lbl.className = "field-label";
+    lbl.style.marginTop = "0";
+    lbl.textContent = spot.water ? "Vanntype" : "Vanntype – ikke valgt ennå";
+    box.appendChild(lbl);
+    box.appendChild(buildWaterToggle("waterEdit", spot.water, function (w) {
+      var before = spot.water;
+      spot.water = w; // show it right away; the live listener confirms it
+      renderPanel();
+      db.collection("spots").doc(spot.id).update({ water: w }).catch(function (err) {
+        spot.water = before; state.dbError = dbErrorMessage(err); render();
+      });
+    }));
+    return box;
   }
 
   function buildCheckinForm(spot) {
@@ -1208,6 +1334,16 @@
     });
     wrap.appendChild(typeRow);
 
+    if ((state._newSpot.type || "badeplass") === "badeplass") {
+      var waterLbl = document.createElement("label");
+      waterLbl.className = "field-label";
+      waterLbl.textContent = "Vann";
+      wrap.appendChild(waterLbl);
+      wrap.appendChild(buildWaterToggle("waterToggle", state._newSpot.water, function (w) {
+        state._newSpot.water = w; state._addError = null; renderPanel();
+      }));
+    }
+
     var visLbl = document.createElement("label");
     visLbl.className = "field-label";
     visLbl.textContent = "Hvem skal se dette stedet?";
@@ -1276,6 +1412,8 @@
     save.addEventListener("click", function () {
       var ns = state._newSpot;
       if (!ns.name || !ns.name.trim()) { state._addError = "Gi badeplassen et navn."; render(); return; }
+      var isBade = ns.type !== "sauna";
+      if (isBade && WATER_TYPES.indexOf(ns.water) === -1) { state._addError = "Velg om badeplassen er ved saltvann, innsjø eller elv."; render(); return; }
       if (!state.myUser) { state._addError = requireSignInMessage(); render(); return; }
       save.disabled = true;
       db.collection("spots").add({
@@ -1283,6 +1421,7 @@
         kommune: (ns.kommune || "").trim() || "Ukjent",
         fylke: (ns.fylke || "").trim(),
         type: ns.type === "sauna" ? "sauna" : "badeplass",
+        water: isBade ? ns.water : null,
         visibility: ns.visibility === "private" ? "private" : "public",
         lat: ns.lat, lon: ns.lon,
         desc: (ns.desc || "").trim(),
@@ -1504,6 +1643,7 @@
     render();
   });
   typeFilterEl.addEventListener("change", function () { state.typeFilter = typeFilterEl.value; render(); });
+  waterFilterEl.addEventListener("change", function () { state.waterFilter = waterFilterEl.value; render(); });
 
   // Phones: the three dropdowns hide behind a "Filter" button (CSS); the badge counts active filters.
   var filterToggle = document.getElementById("filterToggle");
@@ -1517,8 +1657,8 @@
   filterToggle.addEventListener("click", function () { setFiltersOpen(!mapToolbar.classList.contains("filters-open")); });
   document.getElementById("filterDone").addEventListener("click", function () { setFiltersOpen(false); });
   document.getElementById("filterReset").addEventListener("click", function () {
-    state.fylkeFilter = "all"; state.kommuneFilter = "all"; state.typeFilter = "all";
-    fylkeFilterEl.value = "all"; typeFilterEl.value = "all";
+    state.fylkeFilter = "all"; state.kommuneFilter = "all"; state.typeFilter = "all"; state.waterFilter = "all";
+    fylkeFilterEl.value = "all"; typeFilterEl.value = "all"; waterFilterEl.value = "all";
     populateKommuneFilter(); kommuneFilterEl.value = "all";
     pendingFlyTo = true;
     render();
@@ -1614,10 +1754,84 @@
   legendToggle.addEventListener("click", function () { setLegendOpen(mapLegend.classList.contains("collapsed"), true); });
   function renderFilterCount() {
     if (!filterCount) return; // render() can run before this part of the script has executed
-    var n = [state.fylkeFilter, state.kommuneFilter, state.typeFilter].filter(function (v) { return v !== "all"; }).length;
+    var n = [state.fylkeFilter, state.kommuneFilter, state.typeFilter, state.waterFilter].filter(function (v) { return v !== "all"; }).length;
     filterCount.textContent = n ? String(n) : "";
   }
   sharedBannerClose.addEventListener("click", clearSharedList);
+
+  // ---------------- Fallback: plain REST reads when the Firebase SDK never answers ----------------
+  // Seen in Messenger's in-app browser on iPhone: the Firestore SDK waits for Firebase Auth to finish starting,
+  // and on iOS Auth first loads Google's sign-in frame, which can hang there - so nothing ever loads and no
+  // error is raised. Reading is public (see firestore.rules), so fetch the same data straight from Firestore's
+  // REST API instead. If the SDK answers later, its live data simply replaces this snapshot.
+  var REST_FALLBACK_AFTER_MS = 4000;
+  var restBase = "https://firestore.googleapis.com/v1/projects/" + encodeURIComponent(cfg.projectId) + "/databases/(default)/documents/";
+  var restStarted = false;
+  function fsValue(v) {
+    if (!v) return null;
+    if ("stringValue" in v) return v.stringValue;
+    if ("integerValue" in v) return Number(v.integerValue);
+    if ("doubleValue" in v) return v.doubleValue;
+    if ("booleanValue" in v) return v.booleanValue;
+    if ("timestampValue" in v) return v.timestampValue;
+    if ("arrayValue" in v) return (v.arrayValue.values || []).map(fsValue);
+    if ("mapValue" in v) { var o = {}, f = v.mapValue.fields || {}; Object.keys(f).forEach(function (k) { o[k] = fsValue(f[k]); }); return o; }
+    return null; // nullValue and anything unexpected
+  }
+  function fsDoc(d) {
+    var o = fsValue({ mapValue: { fields: d.fields || {} } });
+    o.id = d.name.split("/").pop();
+    return o;
+  }
+  function restList(coll) {
+    var out = [];
+    function page(token) {
+      var url = restBase + coll + "?pageSize=300&key=" + encodeURIComponent(cfg.apiKey) + (token ? "&pageToken=" + encodeURIComponent(token) : "");
+      return fetch(url).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function (j) { (j.documents || []).forEach(function (d) { out.push(fsDoc(d)); }); return j.nextPageToken ? page(j.nextPageToken) : out; });
+    }
+    return page(null);
+  }
+  function restGet(coll, id) {
+    return fetch(restBase + coll + "/" + encodeURIComponent(id) + "?key=" + encodeURIComponent(cfg.apiKey)).then(function (r) {
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json().then(fsDoc);
+    });
+  }
+  function loadViaRestFallback() {
+    if (restStarted) return;
+    restStarted = true;
+    restList("spots").then(function (list) {
+      if (state.spotsSource !== "sdk") { state.spotsSource = "rest"; applySpots(list); }
+    }).catch(function () {
+      if (!state.spotsLoaded) {
+        state.spotsError = "Fikk ikke hentet badeplassene. Sjekk nettet, eller åpne siden i Safari eller Chrome (i Messenger: ••• → Åpne i Safari).";
+        render();
+      }
+    });
+    restList("checkins").then(function (list) {
+      if (state.checkinsSource !== "sdk") { state.checkinsSource = "rest"; applyCheckins(list); }
+    }).catch(function () { /* ratings just stay empty */ });
+    if (state.sharedListId && state.sharedListSource !== "sdk") {
+      restGet("lists", state.sharedListId).then(function (data) {
+        if (state.sharedListSource !== "sdk") { state.sharedListSource = "rest"; applySharedList(data); }
+      }).catch(function () {});
+    }
+  }
+  setTimeout(function () { if (!state.spotsLoaded) loadViaRestFallback(); }, REST_FALLBACK_AFTER_MS);
+
+  // ?debug=1 shows where the data came from and whether sign-in finished starting (for troubleshooting on phones)
+  if (/[?&]debug=1/.test(location.search)) {
+    var dbg = document.createElement("div");
+    dbg.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:9999;background:#000c;color:#fff;font:12px/1.4 monospace;padding:6px 8px;border-radius:8px;pointer-events:none";
+    document.body.appendChild(dbg);
+    var t0 = Date.now();
+    setInterval(function () {
+      dbg.textContent = "t=" + Math.round((Date.now() - t0) / 1000) + "s  data: " + (state.spotsSource || "venter") +
+        " (" + state.spots.length + ")  innlogging: " + (state.authReady ? "klar" : "venter");
+    }, 500);
+  }
 
   // ---------------- Shared list via ?liste=<id>, or a single shared spot via ?sted=<id> ----------------
   (function () {

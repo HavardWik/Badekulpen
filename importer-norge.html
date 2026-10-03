@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Badekulpen — hent badeplasser fra hele Norge</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 48px auto; padding: 0 20px; color: #0B2942; background: #EAF2F8; line-height: 1.5; }
+  h1 { font-size: 22px; }
+  .card { background: #fff; border: 1px solid #C3D8E5; border-radius: 16px; padding: 22px 24px; margin-top: 18px; }
+  button { font: inherit; font-size: 15px; font-weight: 600; padding: 11px 20px; border-radius: 999px; border: 0; background: #0B3C5D; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #downloadBtn { background: #2E8C58; margin-top: 12px; }
+  .bar { height: 10px; background: #DCE9F3; border-radius: 999px; overflow: hidden; margin: 14px 0 6px; }
+  .bar > div { height: 100%; width: 0; background: #3B8FCC; transition: width .2s; }
+  #status { font-size: 14px; color: #3F5C70; min-height: 1.4em; }
+  #status.err { color: #BD5339; font-weight: 600; }
+  #summary { font-size: 14px; margin-top: 10px; }
+  ol { padding-left: 20px; } li { margin: 4px 0; }
+  code { background: #DCE9F3; padding: 1px 6px; border-radius: 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>Badekulpen — hent badeplasser fra hele Norge</h1>
+  <p>Denne siden henter alle steder av typen <b>Badeplass</b> og <b>Strand</b> fra Kartverkets stedsnavnregister,
+     og anslår om hvert sted ligger ved <b>saltvann, innsjø eller elv</b> ved å se på terrenget rundt det
+     (Kartverkets høydedata). Det tar noen minutter. Du trenger ikke være logget inn.</p>
+
+  <div class="card">
+    <button id="runImport">Hent badeplasser</button>
+    <div class="bar"><div id="bar"></div></div>
+    <div id="status">Klar.</div>
+    <div id="summary"></div>
+    <button id="downloadBtn" hidden>Last ned badeplasser-norge.json</button>
+  </div>
+
+  <div class="card">
+    <b>Når filen er lastet ned:</b>
+    <ol>
+      <li>Gå til Badekulpen-repoet på GitHub → <b>Add file → Upload files</b>.</li>
+      <li>Dra inn <code>badeplasser-norge.json</code> og trykk <b>Commit changes</b>.</li>
+      <li>Etter et par minutter vises stedene i kartet. Kjør denne siden på nytt når du vil ha med nye steder fra Kartverket.</li>
+    </ol>
+    <p style="font-size:13px;color:#74909F">Data: Stedsnavn og høydedata © Kartverket, lisens CC BY 4.0.</p>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  var SSR = "https://ws.geonorge.no/stedsnavn/v1/sted";
+  var HEIGHT = "https://ws.geonorge.no/hoydedata/v1/punkt";
+  var TYPES = [["badeplass", "badeplass"], ["strand", "strand"]]; // Kartverket only honours ONE navneobjekttype per request
+  var PAGE = 500;            // max treffPerSide
+  var MAX_POINTS = 50;       // max points per height request
+  var DUPLICATE_M = 75;      // a "Strand" this close to a kept place is the same spot
+  var RINGS = [[0, 3], [60, 2], [150, 1]];  // [radius m, weight]; 8 directions per ring
+  var WORKERS = 5;
+
+  var statusEl = document.getElementById("status");
+  var barEl = document.getElementById("bar");
+  var runBtn = document.getElementById("runImport");
+  var dlBtn = document.getElementById("downloadBtn");
+  var summaryEl = document.getElementById("summary");
+
+  function setStatus(t, isErr) { statusEl.textContent = t; statusEl.className = isErr ? "err" : ""; }
+  function setBar(f) { barEl.style.width = Math.round(Math.max(0, Math.min(1, f)) * 100) + "%"; }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function fetchJson(url, tries) {
+    tries = tries || 4;
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).catch(function (e) {
+      if (tries <= 1) throw e;
+      return sleep(600 * (5 - tries)).then(function () { return fetchJson(url, tries - 1); });
+    });
+  }
+
+  // ---------- 1. Place names ----------
+  function toPlace(it, kind) {
+    var names = it.stedsnavn || [];
+    var main = names.filter(function (n) { return n.navnestatus === "hovednavn"; })[0] || names[0];
+    var rp = it.representasjonspunkt || {};
+    var lat = rp.nord, lon = rp["øst"];
+    if ((typeof lat !== "number" || typeof lon !== "number") && it.geojson && it.geojson.geometry) {
+      lon = it.geojson.geometry.coordinates[0]; lat = it.geojson.geometry.coordinates[1];
+    }
+    if (!main || !main["skrivemåte"] || typeof lat !== "number" || typeof lon !== "number") return null;
+    if (it.stedstatus && it.stedstatus !== "aktiv") return null;
+    return {
+      id: "ssr-" + it.stedsnummer,
+      name: main["skrivemåte"],
+      kind: kind,
+      kommune: (it.kommuner && it.kommuner[0] && it.kommuner[0].kommunenavn) || "",
+      fylke: (it.fylker && it.fylker[0] && it.fylker[0].fylkesnavn) || "",
+      lat: Math.round(lat * 1e5) / 1e5,
+      lon: Math.round(lon * 1e5) / 1e5
+    };
+  }
+
+  function fetchType(code, kind) {
+    function url(side) { return SSR + "?navneobjekttype=" + code + "&treffPerSide=" + PAGE + "&side=" + side + "&utkoordsys=4258"; }
+    return fetchJson(url(1)).then(function (first) {
+      var total = (first.metadata && first.metadata.totaltAntallTreff) || 0;
+      var pages = Math.ceil(total / PAGE);
+      var rest = [];
+      for (var s = 2; s <= pages; s++) rest.push(fetchJson(url(s)));
+      return Promise.all(rest).then(function (more) {
+        var items = (first.navn || []);
+        more.forEach(function (m) { items = items.concat(m.navn || []); });
+        return items.map(function (it) { return toPlace(it, kind); }).filter(Boolean);
+      });
+    });
+  }
+
+  function metres(a, b) {
+    var dy = (a.lat - b.lat) * 111320;
+    var dx = (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function dropDuplicates(places) {
+    // places arrive "badeplass" first, so an official badeplass beats a beach with (almost) the same position
+    var kept = [], seen = {};
+    places.forEach(function (p) {
+      if (seen[p.id]) return;
+      for (var i = 0; i < kept.length; i++) if (metres(p, kept[i]) < DUPLICATE_M) return;
+      seen[p.id] = true; kept.push(p);
+    });
+    return kept;
+  }
+
+  // ---------- 2. Water type from the terrain around each place ----------
+  function samplePoints(p) {
+    var pts = [];
+    RINGS.forEach(function (ring) {
+      var r = ring[0], dirs = r === 0 ? 1 : 8;
+      for (var k = 0; k < dirs; k++) {
+        var a = (k / dirs) * 2 * Math.PI;
+        var dLat = (r * Math.cos(a)) / 111320;
+        var dLon = (r * Math.sin(a)) / (111320 * Math.cos(p.lat * Math.PI / 180));
+        pts.push({ x: Math.round((p.lon + dLon) * 1e6) / 1e6, y: Math.round((p.lat + dLat) * 1e6) / 1e6, w: ring[1] });
+      }
+    });
+    return pts;
+  }
+  function waterClass(terreng) {
+    var t = String(terreng || "").toLowerCase();
+    if (t.indexOf("havflate") !== -1 || t === "hav" || t === "sjø") return "saltvann";
+    if (t.indexOf("innsj") === 0) return "innsjo";
+    if (t.indexOf("elv") !== -1 || t.indexOf("bekk") !== -1) return "elv";
+    return null;
+  }
+  function classify(samples) {
+    var score = { saltvann: 0, innsjo: 0, elv: 0 };
+    samples.forEach(function (s) { var c = waterClass(s.terreng); if (c) score[c] += s.w; });
+    var best = ["saltvann", "innsjo", "elv"].reduce(function (b, c) { return score[c] > score[b] ? c : b; }, "saltvann");
+    if (score[best] > 0) return { water: best, waterGuess: false };
+    // nothing wet nearby: beaches right at sea level are almost always by the sea
+    var centre = samples[0];
+    var z = centre && typeof centre.z === "number" ? centre.z : null;
+    return { water: z !== null && z > 5 ? "innsjo" : "saltvann", waterGuess: true };
+  }
+
+  function classifyAll(places, onProgress) {
+    var perReq = Math.floor(MAX_POINTS / samplePoints(places[0] || { lat: 60, lon: 10 }).length);
+    var jobs = [];
+    for (var i = 0; i < places.length; i += perReq) jobs.push(places.slice(i, i + perReq));
+    var done = 0, next = 0;
+    function runJob(group) {
+      var sets = group.map(samplePoints);
+      var all = [].concat.apply([], sets);
+      var url = HEIGHT + "?koordsys=4258&geojson=false&punkter=" +
+        encodeURIComponent(JSON.stringify(all.map(function (q) { return [q.x, q.y]; })));
+      return fetchJson(url).then(function (res) {
+        var out = res.punkter || [], k = 0;
+        group.forEach(function (p, gi) {
+          var samples = sets[gi].map(function (q) { var r = out[k++] || {}; return { terreng: r.terreng, z: r.z, w: q.w }; });
+          var c = classify(samples); p.water = c.water; p.waterGuess = c.waterGuess;
+        });
+      }).catch(function () {
+        group.forEach(function (p) { p.water = "saltvann"; p.waterGuess = true; }); // gave up after retries
+      }).then(function () { done += group.length; onProgress(done, places.length); });
+    }
+    function worker() {
+      if (next >= jobs.length) return Promise.resolve();
+      return runJob(jobs[next++]).then(worker);
+    }
+    var ws = [];
+    for (var w = 0; w < WORKERS; w++) ws.push(worker());
+    return Promise.all(ws).then(function () { return places; });
+  }
+
+  // ---------- 3. Run ----------
+  runBtn.addEventListener("click", function () {
+    runBtn.disabled = true; dlBtn.hidden = true; summaryEl.textContent = ""; setBar(0);
+    setStatus("Henter stedsnavn fra Kartverket…");
+    var lists = [];
+    TYPES.reduce(function (pr, t) {
+      return pr.then(function () { return fetchType(t[0], t[1]).then(function (l) { lists.push(l); }); });
+    }, Promise.resolve()).then(function () {
+      var places = dropDuplicates([].concat.apply([], lists));
+      setStatus("Fant " + places.length + " steder. Sjekker vanntype…"); setBar(0.05);
+      return classifyAll(places, function (d, n) {
+        setBar(0.05 + 0.95 * d / n);
+        setStatus("Sjekker vanntype: " + d + " av " + n + " steder…");
+      });
+    }).then(function (places) {
+      var count = function (f) { return places.filter(f).length; };
+      var file = {
+        generated: new Date().toISOString(),
+        source: "Kartverket – Sentralt stedsnavnregister (SSR) og høydedata, CC BY 4.0",
+        count: places.length,
+        spots: places
+      };
+      var blob = new Blob([JSON.stringify(file)], { type: "application/json" });
+      dlBtn.onclick = function () {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = "badeplasser-norge.json";
+        document.body.appendChild(a); a.click(); a.remove();
+      };
+      summaryEl.textContent = places.length + " steder: " + count(function (p) { return p.kind === "badeplass"; }) + " badeplasser og " +
+        count(function (p) { return p.kind === "strand"; }) + " strender. Saltvann " + count(function (p) { return p.water === "saltvann"; }) +
+        ", innsjø " + count(function (p) { return p.water === "innsjo"; }) + ", elv " + count(function (p) { return p.water === "elv"; }) +
+        " (anslått uten vann i nærheten: " + count(function (p) { return p.waterGuess; }) + ").";
+      setStatus("Ferdig! Last ned filen og last den opp til GitHub."); setBar(1);
+      dlBtn.hidden = false; runBtn.disabled = false;
+    }).catch(function (e) {
+      setStatus("Fikk ikke kontakt med Kartverket (" + (e && e.message ? e.message : "nettverksfeil") + "). Sjekk nettet og prøv igjen litt senere.", true);
+      runBtn.disabled = false;
+    });
+  });
+})();
+</script>
+</body>
+</html>
