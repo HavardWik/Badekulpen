@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Badekulpen</title>
 <meta name="description" content="Badekulpen — finn, sjekk inn og vurder badeplasser og saunaer i hele Norge sammen med venner og familie.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Badekulpen">
+<meta property="og:locale" content="nb_NO">
+<meta property="og:title" content="Badekulpen – badeplasser i hele Norge">
+<meta property="og:description" content="Kart over mer enn 1 100 badeplasser og badstuer i hele Norge. Sjekk inn, gi stjerner og del favorittene dine med venner og familie.">
+<meta property="og:url" content="https://havardwik.github.io/Badekulpen/">
+<meta property="og:image" content="https://havardwik.github.io/Badekulpen/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Badekulpen – kart over badeplasser">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0B3C5D">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230B3C5D'/%3E%3Cpath d='M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='8' r='3' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -324,6 +336,29 @@
   }
   .photo-lightbox img { max-width: min(92vw, 900px); max-height: 90vh; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
 
+  .inapp-help {
+    position: fixed; inset: 0; z-index: 9500; background: rgba(7,24,38,.62); display: flex; align-items: flex-end; justify-content: center;
+    padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .inapp-card {
+    width: 100%; max-width: 440px; background: var(--surface); color: var(--ink); border-radius: 18px; padding: 20px 20px 16px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35);
+  }
+  .inapp-card h2 { font-size: 19px; margin-bottom: 8px; }
+  .inapp-card p { font-size: 14px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 10px; }
+  .inapp-card .inapp-steps { color: var(--ink); background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; }
+  .inapp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .inapp-actions .btn { text-decoration: none; }
+  @media (min-width: 821px) { .inapp-help { align-items: center; } }
+
+  .ext-link {
+    display: flex; align-items: center; gap: 8px; margin: -4px 0 16px; padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 600;
+  }
+  .ext-link:hover { background: var(--surface-2); }
+  .ext-link svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--accent); }
+  .ext-link .ext-arrow { margin-left: auto; color: var(--ink-faint); font-weight: 700; }
+
   .inline-banner { font-size: 12.5px; padding: 9px 12px; border-radius: 10px; margin-bottom: 14px; background: var(--warm-soft); color: var(--low); border: 1px solid transparent; }
   .inline-banner.info { background: var(--accent-soft); color: var(--accent); }
 
@@ -590,6 +625,19 @@
   <section class="mine-view" id="mineView" style="display:none"></section>
 </main>
 
+<div class="inapp-help" id="inAppHelp" hidden role="dialog" aria-modal="true" aria-labelledby="inAppTitle">
+  <div class="inapp-card">
+    <h2 id="inAppTitle">Åpne i nettleseren for å logge inn</h2>
+    <p>Google tillater ikke innlogging inne i <span id="inAppApp">appen</span>. Du kan se kartet her, men for å sjekke inn eller legge til steder må siden åpnes i Safari eller Chrome.</p>
+    <p class="inapp-steps" id="inAppSteps"></p>
+    <div class="inapp-actions">
+      <a class="btn btn-accent" id="inAppChrome" hidden>Åpne i Chrome</a>
+      <button type="button" class="btn" id="inAppCopy">Kopier lenken</button>
+      <button type="button" class="btn btn-ghost" id="inAppClose">Lukk</button>
+    </div>
+  </div>
+</div>
+
 <div class="photo-lightbox" id="photoLightbox">
   <img id="photoLightboxImg" src="" alt="">
 </div>
@@ -603,6 +651,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
 
-<script src="app.js?v=2026-10-03f"></script>
+<script src="app.js?v=2026-10-03g"></script>
 </body>
 </html>

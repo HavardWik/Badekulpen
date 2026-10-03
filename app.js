@@ -158,6 +158,13 @@
   var waterFilterEl = document.getElementById("waterFilter");
   var WATER_LABELS = { saltvann: "Saltvann", innsjo: "Innsjø", elv: "Elv" };
   var WATER_TYPES = ["saltvann", "innsjo", "elv"];
+  // Search Google Maps for the place by name + kommune (shows its Google page with
+  // reviews when Google knows it), falling back to the coordinates for nameless spots.
+  function googleMapsUrl(spot) {
+    var name = String(spot.name || "").replace(/["“”«»()]/g, " ").replace(/\s+/g, " ").trim();
+    var q = name ? name + (spot.kommune ? ", " + spot.kommune : "") : (spot.lat + "," + spot.lon);
+    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
+  }
   var signInBtn = document.getElementById("signInBtn");
   var signOutBtn = document.getElementById("signOutBtn");
   var viewerChip = document.getElementById("viewerChip");
@@ -180,12 +187,62 @@
   photoLightbox.addEventListener("click", closeLightbox);
 
   // ---------------- Auth ----------------
-  signInBtn.addEventListener("click", function () {
-    var provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).catch(function (err) {
-      alert("Kunne ikke logge inn: " + (err && err.message ? err.message : err));
-    });
+  // Google blocks sign-in inside apps' built-in browsers (Messenger, Facebook,
+  // Instagram, Snapchat …) with a "disallowed_useragent" error page. Detect
+  // those and explain how to open the page in a real browser instead.
+  function inAppBrowserName() {
+    var ua = navigator.userAgent || "";
+    if (/Messenger|Orca-Android|MESSENGER/.test(ua)) return "Messenger";
+    if (/FBAN|FBAV|FB_IAB|FB4A|FBIOS/.test(ua)) return "Facebook";
+    if (/Instagram/.test(ua)) return "Instagram";
+    if (/Snapchat/.test(ua)) return "Snapchat";
+    if (/\bLine\//.test(ua)) return "LINE";
+    if (/TikTok|musical_ly|BytedanceWebview/.test(ua)) return "TikTok";
+    if (/LinkedInApp/.test(ua)) return "LinkedIn";
+    if (/Android/.test(ua) && /; wv\)/.test(ua)) return "appen";
+    return null;
+  }
+  var inAppHelp = document.getElementById("inAppHelp");
+  function showInAppHelp(appName) {
+    var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+    document.getElementById("inAppApp").textContent = appName === "appen" ? "denne appen" : appName;
+    document.getElementById("inAppSteps").innerHTML = isIOS
+      ? 'Trykk på <b>•••</b> (eller <b>⋯</b>) øverst til høyre, og velg <b>«Åpne i Safari»</b> (eller «Åpne i nettleser»).'
+      : 'Trykk på <b>⋮</b> øverst til høyre, og velg <b>«Åpne i nettleser»</b> (eller «Åpne i Chrome»).';
+    var chromeBtn = document.getElementById("inAppChrome");
+    if (!isIOS && /Android/.test(navigator.userAgent || "")) {
+      chromeBtn.href = "intent://" + location.host + location.pathname + location.search + location.hash + "#Intent;scheme=https;package=com.android.chrome;end";
+      chromeBtn.hidden = false;
+    } else {
+      chromeBtn.hidden = true;
+    }
+    inAppHelp.hidden = false;
+  }
+  document.getElementById("inAppClose").addEventListener("click", function () { inAppHelp.hidden = true; });
+  inAppHelp.addEventListener("click", function (e) { if (e.target === inAppHelp) inAppHelp.hidden = true; });
+  document.getElementById("inAppCopy").addEventListener("click", function () {
+    var btn = this, url = location.href;
+    function done() { btn.textContent = "Lenke kopiert!"; setTimeout(function () { btn.textContent = "Kopier lenken"; }, 2000); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { prompt("Kopier lenken:", url); });
+    else prompt("Kopier lenken:", url);
   });
+
+  // Every sign-in goes through here. Resolves when signed in.
+  function signIn() {
+    var app = inAppBrowserName();
+    if (app) { showInAppHelp(app); return Promise.reject(new Error("in-app-browser")); }
+    return auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(function (err) {
+      var code = err && err.code;
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") throw err;
+      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment" || code === "auth/web-storage-unsupported") {
+        showInAppHelp("appen");
+      } else {
+        alert("Kunne ikke logge inn: " + (err && err.message ? err.message : err));
+      }
+      throw err;
+    });
+  }
+  signInBtn.addEventListener("click", function () { signIn().catch(function () {}); });
   signOutBtn.addEventListener("click", function () { auth.signOut(); });
 
   auth.onAuthStateChanged(function (user) {
@@ -754,6 +811,16 @@
       rs.appendChild(cnt2);
     }
     wrap.appendChild(rs);
+
+    // Google's own reviews can't be shown here (their terms forbid showing them next to
+    // a non-Google map), so link straight to the place on Google Maps instead.
+    var gm = document.createElement("a");
+    gm.className = "ext-link";
+    gm.href = googleMapsUrl(spot);
+    gm.target = "_blank";
+    gm.rel = "noopener";
+    gm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21s-7-5.2-7-11a7 7 0 0 1 14 0c0 5.8-7 11-7 11Z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="10" r="2.4" stroke="currentColor" stroke-width="1.8"/></svg><span>Se vurderinger på Google Maps</span><span class="ext-arrow" aria-hidden="true">↗</span>';
+    wrap.appendChild(gm);
 
     var listLbl = document.createElement("div");
     listLbl.className = "section-label";
@@ -1607,7 +1674,7 @@
   });
 
   function startAddSpot() {
-    if (!state.myUser) { auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then(function () { enterPlacing(); }); return; }
+    if (!state.myUser) { signIn().then(function () { enterPlacing(); }, function () {}); return; }
     state.formMode = null;
     enterPlacing();
   }
